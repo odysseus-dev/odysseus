@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { allowsDependency, imports, checkArchitecture, inventory } from '../scripts/check_frontend.mjs';
 import * as source from '../frontend/src/shared/actionMenuOrder.js';
 import * as deployed from '../static/js/actionMenuOrder.js';
@@ -83,6 +84,12 @@ function fixture(t, modules, { cache = true } = {}) {
 test('complete mapped graph and exact precache pass', t => {
   const root = fixture(t, { 'features/notes/index.js': "export { value } from './domain/value.js';", 'features/notes/domain/value.js': 'export const value = 1;' });
   assert.equal(checkArchitecture(root), 2);
+});
+
+test('the repository itself passes the architecture check', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'frontend/modules.json'), 'utf8'));
+  assert.equal(checkArchitecture(root), manifest.modules.length);
 });
 
 test('feature-private import fails through the full checker', t => {

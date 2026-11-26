@@ -1052,6 +1052,9 @@
     <!-- Attachments strip -->
     <div id="attach-strip" class="attach-strip"></div>
 
+    <!-- Notes in this chat's context (features/notes/ui/contextStrip.js) -->
+    <div id="notes-context-strip" class="notes-context-strip" role="region" aria-label="Notes in this chat's context" hidden></div>
+
     <!-- Hidden elements for form logic -->
     <input type="checkbox" id="research-toggle" style="display:none;">
     <input type="checkbox" id="rag-toggle" style="display:none;">
@@ -2093,6 +2096,10 @@
                 <input type="checkbox" checked data-ui-key="preset-mini-btn"><span class="vis-switch"></span>
               </label>
             </div>
+          </div>
+          <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>Show external images in notes<span style="flex:1"></span><label class="admin-switch" title="Show images from other sites in notes"><input type="checkbox" id="set-notes-external-images" aria-label="Show external images in notes"><span class="admin-slider"></span></label></h2>
+            <div class="admin-toggle-sub">Off: an image from another site shows as a link and is never loaded. On: it shows as an image in your notes and in notes shared with you. Loading it tells that site your IP address and when you opened the note. No cookies or referrer are sent. This only changes what you see; the note is saved the same either way.</div>
           </div>
         </div>
 

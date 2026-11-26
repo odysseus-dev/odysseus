@@ -1,5 +1,5 @@
 /** Label chips, reminder/goal filters and collapsed tag-strip rendering. */
-import { _visibleNoteTags, _nextGoalStep } from '../domain/noteRules.js';
+import { _visibleNoteTags, _nextGoalStep, isOwnNote } from '../domain/noteRules.js';
 import { _hasTimeComponent } from '../domain/recurrence.js';
 export function createFilters({
   NOTES_LABELS_COLLAPSED_KEY,
@@ -32,12 +32,16 @@ export function createFilters({
     // from each, so we surface the count next to the chip.
     const goalCount = visibleNotes.filter(n => n.note_type === 'goal' && !n.archived).length;
     const todayCount = visibleNotes.filter(n => n.note_type === 'goal' && !n.archived && _nextGoalStep(n)).length;
+    const sharedCount = visibleNotes.filter(n => !isOwnNote(n)).length;
     const hasUsefulFilters = sortedLabels.length > 0 || reminderCount > 0 || goalCount > 0;
     const hasActiveFilter = state.activeLabel !== null || state.activeFilter !== null;
     if (!hasUsefulFilters && !hasActiveFilter) {
-      bar.innerHTML = '';
-      bar.style.display = 'none';
-      return;
+      // Notes shared with me keep the strip up for their chip.
+      if (!sharedCount) {
+        bar.innerHTML = '';
+        bar.style.display = 'none';
+        return;
+      }
     }
     bar.style.display = '';
     const allActive = state.activeLabel === null && state.activeFilter === null;
@@ -52,6 +56,10 @@ export function createFilters({
       const isOn = state.activeFilter === 'goals';
       const icon = '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>';
       html += `<button class="notes-label-chip notes-label-chip-goals${isOn ? ' active' : ''}" data-action="goals" title="Show only goals">${icon}Goals <span class="notes-label-chip-count">${goalCount}</span></button>`;
+    }
+    if (sharedCount > 0 || state.activeFilter === 'shared') {
+      const isOn = state.activeFilter === 'shared';
+      html += `<button class="notes-label-chip notes-label-chip-shared${isOn ? ' active' : ''}" data-action="shared" title="Notes other people shared with you">Shared with me <span class="notes-label-chip-count">${sharedCount}</span></button>`;
     }
     const isReminderOn = state.activeFilter === 'reminders';
     const isReminderOff = state.activeFilter === 'no-reminders';
@@ -80,6 +88,9 @@ export function createFilters({
         } else if (chip.dataset.action === 'goals') {
           app.setActiveLabel(null);
           app.setActiveFilter((state.activeFilter === 'goals') ? null : 'goals');
+        } else if (chip.dataset.action === 'shared') {
+          app.setActiveLabel(null);
+          app.setActiveFilter((state.activeFilter === 'shared') ? null : 'shared');
         } else if (chip.dataset.action === 'default') {
           app.setActiveLabel(null);
           app.setActiveFilter((state.activeFilter === 'default') ? null : 'default');

@@ -16,6 +16,8 @@ from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent, Note
 from core.notes_markdown import items_to_markdown
+from core.notes_sharing import delete_note_shares
+from core.note_versions import delete_note_versions
 from src.auth_helpers import effective_user, require_user
 from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
 from src.upload_handler import reserve_upload_references
@@ -743,6 +745,8 @@ def _delete_calendar_reminders_for_event(db, owner: str, ev: CalendarEvent) -> i
         .all()
     )
     for note in notes:
+        delete_note_shares(db, note.id)
+        delete_note_versions(db, [note.id])
         db.delete(note)
     return len(notes)
 

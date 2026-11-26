@@ -628,6 +628,17 @@ def _event_id(payload: Mapping[str, Any], occurrence: int) -> str:
     return "ev-" + _digest(f"{occurrence}:{canonical}")[:16]
 
 
+# Words that can sit before "actions" / "operations" / "calls" without
+# naming an operation ("the two actions", "the requested operations").
+_GENERIC_OPERATION_WORDS = frozenset({
+    "a", "an", "the", "this", "that", "these", "those", "both", "all", "each", "every", "some",
+    "several", "many", "few", "other", "same", "same-named", "its", "my", "your", "their", "our",
+    "one", "two", "three", "four", "five", "multiple", "tool", "api", "http", "previous", "next",
+    "first", "last", "following", "above", "below", "required", "needed", "necessary", "relevant",
+    "requested", "remaining", "individual", "separate", "further", "additional", "more", "any",
+})
+
+
 class EvidenceLedger:
     def __init__(self, requirements: CompletionRequirements | None = None) -> None:
         self.requirements = requirements or CompletionRequirements()
@@ -641,6 +652,9 @@ class EvidenceLedger:
         # order of actions so receipt evidence and effects share one ordering.
         self.effects: list[dict[str, Any]] = []
         self._action_order: dict[str, int] = {}
+        # Receipt operation identity (tool, action, succeeded, action id), kept
+        # privately so prose naming an operation can be matched to its receipt.
+        self._operations: list[tuple[str, str, bool, str]] = []
 
     def record_effects(self, entries: Iterable[Mapping[str, Any]], action_order: Mapping[str, int],
                        partial_reads: Iterable[str] = ()) -> None:
@@ -839,6 +853,13 @@ class EvidenceLedger:
         success = authoritative and exit_code == 0 and not event.get('error')
         if not authoritative:
             success = not bool(event.get("error"))
+        try:
+            arguments = json.loads(command) if command.lstrip().startswith("{") else {}
+        except (TypeError, json.JSONDecodeError):
+            arguments = {}
+        action = arguments.get("action") if isinstance(arguments, Mapping) else ""
+        self._operations.append((tool, action if isinstance(action, str) else "",
+                                 bool(authoritative and success), str(event.get("action_id") or "")))
         self._append(
             kind=EvidenceKind.TOOL_RESULT,
             success=success,
@@ -948,6 +969,78 @@ class EvidenceLedger:
         return (all(identity in names for identity in identities)
                 and all(any(_artifact_path_matches_required(word, path, self.requirements.workspace_root)
                             for word in words) for path in paths))
+
+    def _supports_operation_claim(self, statement: str) -> bool:
+        """A run claim that names operations this turn's receipts show succeeded.
+
+        "I ran the list action" names ``list``; "I ran manage_notes" names every
+        manage_notes operation. Each named operation needs an authoritative
+        successful receipt. A claim naming none, or any remote success, stays
+        unsupported: a remote acknowledgement never shows the remote state.
+        """
+        if not self._operations or re.search(r'\bremote\b', statement, re.I):
+            return False
+        external = {str(getattr(entry["assessment"], "action_id", "") or "")
+                    for entry in self.unverified_external_effects()}
+
+        def said(word: str, suffix: str = "") -> bool:
+            return bool(word) and re.search(rf'(?<![\w-]){re.escape(word)}(?![\w-]){suffix}', statement, re.I) is not None
+
+        nouns = r'\s+(?:actions?|operations?|calls?|commands?|requests?)\b'
+        kinds = r'(?:\s+and\s+[\w-]+)*' + nouns
+        # Every operation the sentence lists ("the list and delete actions"),
+        # read from the text rather than the receipts: one with no successful
+        # receipt makes the whole claim unsupported.
+        tools = {tool.lower() for tool, _, _, _ in self._operations}
+        for listed in re.finditer(r'((?:[\w-]+\s*,\s*)*[\w-]+(?:\s*,?\s+and\s+[\w-]+)*)' + nouns, statement, re.I):
+            for word in re.split(r'\s*,\s*(?:and\s+)?|\s+and\s+', listed.group(1)):
+                word = word.strip().lower()
+                if not word or word.isdigit() or word in tools or word in _GENERIC_OPERATION_WORDS:
+                    continue
+                if not any(action.lower() == word and ok and action_id not in external
+                           for _, action, ok, action_id in self._operations):
+                    return False
+        # The same list after a tool's name, with no noun ("manage_notes list
+        # and delete"). It counts once its first word is an action that tool
+        # ran, and ends at the clause, so "manage_notes list and it returned
+        # 13 notes" lists only list.
+        word = r'[A-Za-z][\w-]*'
+        separator = r'\s*(?:,\s*(?:and\s+|then\s+)?|\s+and\s+(?:then\s+)?|\s+then\s+)'
+        ends = r'(?=\s*(?:[.,;:!?)]|$)|\s+(?:on|for|to|with|in|from|at|of|by)\b)'
+        for tool in {tool for tool, _, _, _ in self._operations if tool}:
+            ran = {action.lower() for receipt_tool, action, _, _ in self._operations if receipt_tool == tool and action}
+            for listed in re.finditer(rf'(?<![\w-]){re.escape(tool)}\s+({word}(?:{separator}{word})*){ends}', statement, re.I):
+                words = [w.lower() for w in re.findall(word, listed.group(1)) if w.lower() not in {"and", "then"}]
+                if not words or words[0] not in ran:
+                    continue
+                for listed_word in words[1:]:
+                    if not any(receipt_tool == tool and action.lower() == listed_word and ok and action_id not in external
+                               for receipt_tool, action, ok, action_id in self._operations):
+                        return False
+        named: set[tuple[str, str]] = set()
+        for tool, action, _, _ in self._operations:
+            tool_named = said(tool)
+            if action and (said(action, kinds) or ("_" in action and said(action)) or (tool_named and said(action))):
+                named.add((tool, action))
+        for tool, action, _, _ in self._operations:
+            if said(tool) and not any(named_tool == tool for named_tool, _ in named):
+                named.add((tool, action))
+        if not named:
+            return False
+        return all(any((tool, action) == operation and ok and action_id not in external
+                       for tool, action, ok, action_id in self._operations)
+                   for operation in named)
+
+    def completed_operations(self) -> tuple[str, ...]:
+        """"tool action" for each operation with a successful receipt, in order.
+
+        Operations with an unverified external effect are left out: the
+        server's own disclosure states those.
+        """
+        external = {str(getattr(entry["assessment"], "action_id", "") or "")
+                    for entry in self.unverified_external_effects()}
+        return tuple(dict.fromkeys(f"{tool} {action}".strip() for tool, action, ok, action_id in self._operations
+                                   if ok and tool and action_id not in external))
 
     def _supports_artifact_claim(self, kind: EvidenceKind, paths: Sequence[str]) -> bool:
         """Match every claimed artifact by identity, never by basename."""

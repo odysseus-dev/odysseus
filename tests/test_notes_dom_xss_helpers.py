@@ -11,7 +11,8 @@ _REPO = Path(__file__).resolve().parent.parent
 def test_notes_image_src_guard_rejects_script_capable_data_images():
     renderer = (_REPO / "static/js/markdown.js").read_text(encoding="utf-8")
     assert "function noteImageSrc(rawUrl)" in renderer
-    assert r"^data:image\/(?:png|jpe?g|gif|webp);base64," in renderer
+    # SVG is allowed as an <img> source only: an image never runs its scripts.
+    assert r"^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64," in renderer
     assert "_safeImgSrc: noteImageSrc" in notes_source("ui/text")
 
 

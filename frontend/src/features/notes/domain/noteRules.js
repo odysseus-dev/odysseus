@@ -1,12 +1,20 @@
 /** Pure Notes completion, tags, reminder and serialization rules. */
 import { _hasTimeComponent } from './recurrence.js';
 import { parseTaskLines, stripTaskLines } from './markdownTasks.js';
+/** The server's reason when it refused a write because the note's title or text is too long (413), else null. */
+export function sizeRefusal(error) {
+  if (error?.status !== 413) return null;
+  const message = error.body?.detail?.message;
+  return typeof message === 'string' && message ? message : 'This note is too long to save.';
+}
+
 export function _isCalendarReminderNote(n) {
   return n && n.source === 'calendar' && n.label === 'calendar';
 }
 
+/** A past reminder on one of my notes. A note shared with me carries its owner's reminder, which is not mine. */
 export function _hasActiveReminder(n, clock) {
-  if (!n || n.archived || _isNoteFullyDone(n)) return false;
+  if (!n || n.archived || !isOwnNote(n) || _isNoteFullyDone(n)) return false;
   if (!n.due_date) return false;
   const t = new Date(n.due_date).getTime();
   return !isNaN(t) && t <= clock.now();
@@ -62,16 +70,90 @@ export function _serializeNoteForCopy(note) {
   return lines.join('\n').trim();
 }
 
+// Agent prompts. A run started from a note may change that note, and only
+// it: the server scopes its manage_notes to the note the chat was created
+// from, so every prompt says so. The prompt is the user's own turn and
+// carries only the user's request: the note itself (its title, content and
+// the todo a run is about) is attached by id and the server adds it as
+// untrusted reference context, since a collaborator may have written it.
+// The notice names no tool: a tool name in the user turn narrows the run's
+// tools to that one family, so an Ask such as "add this to my calendar" would
+// lose the calendar. The server offers manage_notes to every turn of a chat
+// started from a note instead.
+export const EDIT_SCOPE_NOTICE = 'You may edit the attached note (and only it); other notes are read-only.';
+// A run that only reads (a list, a view, a search of the notes) is done when
+// its answer shows what it read: "the list returned 13 notes" is not a list.
+// Worded to leave routing alone: "show" or "search" here would add the UI or
+// web family to every note run, and "list" made the stalled-notes fallback
+// replace the model's own view or update with a list of every note.
+export const SHOW_RESULTS_NOTICE = 'If you read anything for this, give the results in your answer, not just that you did it.';
+const ATTACHED_NOTE = 'The note is attached as the selected note.';
+const FOCUS_ITEM = 'The item is the focus todo of the attached note.';
+const NOTICES = `${SHOW_RESULTS_NOTICE}\n\n${EDIT_SCOPE_NOTICE}`;
+
+// The chat shows a note run's first message without the sentences above:
+// they are for the model, and the note and its todo are shown as cards.
+// The model still receives them. Set to false to show the message as sent.
+export const HIDE_NOTE_RUN_NOTICES = true;
+// Every wording a stored message may carry, older ones included.
+const NOTE_RUN_NOTICES = [
+  ATTACHED_NOTE,
+  FOCUS_ITEM,
+  SHOW_RESULTS_NOTICE,
+  'If you read or list anything for this, put the results in your answer, not just that you did it.',
+  EDIT_SCOPE_NOTICE,
+];
+
+/** A note run's message as the chat shows it: the request, without the notices. Unchanged when nothing would be left. */
+export function noteRunDisplayText(text) {
+  const source = String(text || '');
+  let shown = source.replace(/\r\n/g, '\n');
+  for (const notice of NOTE_RUN_NOTICES) shown = shown.split(notice).join('');
+  shown = shown.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return shown || source;
+}
+const hasBody = note => !!((note?.title || '').trim() || (note?.content || '').trim());
+
+/** The whole note. Empty when the note has nothing to work on. */
 export function _noteToAgentPrompt(note) {
-  const parts = [];
-  if ((note.title || '').trim()) parts.push(note.title.trim());
-  if ((note.content || '').trim()) parts.push(note.content.trim());
-  if (Array.isArray(note.items)) {
-    note.items.filter(it => !it.done && (it.text || '').trim())
-      .forEach(it => parts.push('- ' + it.text.trim()));
-  }
-  const body = parts.join('\n');
-  return body ? `Help me get this done:\n\n${body}\n\nThe source note is read-only. Do not edit, replace, or update it.` : '';
+  return hasBody(note) ? `Help me get this note done. ${ATTACHED_NOTE}\n\n${NOTICES}` : '';
+}
+
+/** One checklist item. The item itself travels as the run's focus todo, next to the note. */
+export function taskAgentPrompt(note, text) {
+  return String(text || '').trim() ? `Help me with the focus todo of the attached note. ${ATTACHED_NOTE}\n\n${NOTICES}` : '';
+}
+
+// `itemRequest` is the same preset asked about one checklist item.
+export const NOTE_ASK_PRESETS = [
+  { label: 'Rewrite more clearly', request: 'Rewrite this note more clearly.', itemRequest: 'Rewrite this item more clearly.' },
+  { label: 'Summarize', request: 'Summarize this note.', itemRequest: 'Summarize this item.' },
+  { label: 'Fix spelling and grammar', request: 'Fix the spelling and grammar in this note.', itemRequest: 'Fix the spelling and grammar in this item.' },
+  { label: 'Search the web about this', request: 'Search the web about the subject of this note and tell me what you find.', itemRequest: 'Search the web about this item and tell me what you find.' },
+];
+
+/** A free-text or preset request about the whole note. */
+export function askNotePrompt(note, request) {
+  const ask = String(request || '').trim();
+  if (!ask) return '';
+  return `${ask}\n\n${ATTACHED_NOTE}\n\n${NOTICES}`;
+}
+
+/** A free-text or preset request about one checklist item. The item travels as the run's focus todo. */
+export function askTaskPrompt(note, request) {
+  const ask = String(request || '').trim();
+  if (!ask) return '';
+  return `${ask}\n\n${FOCUS_ITEM} ${ATTACHED_NOTE}\n\n${NOTICES}`;
+}
+
+/** Agent runs are the owner's: a collaborator never starts one or sees its session. */
+export function canRunNoteAgent(note) {
+  return !!note?.id && isOwnNote(note);
+}
+
+/** Per-item agent buttons: my saved note, outside select mode. Done rows hide theirs in CSS, since a tick flips in place. */
+export function showsTaskAgent(note, { selectMode = false } = {}) {
+  return canRunNoteAgent(note) && !selectMode;
 }
 
 export function _standardVisualVariant(note) {
@@ -84,9 +166,33 @@ export function _standardVisualVariant(note) {
 /** The sort order that puts an edited or new note at the top of the unpinned notes. */
 export function topSortOrder(notes, exceptId = null) {
   const lowest = (notes || [])
-    .filter(n => !n.pinned && n.id !== exceptId)
+    .filter(n => !n.pinned && n.id !== exceptId && n.is_owner !== false)
     .reduce((min, n) => Math.min(min, n.sort_order || 0), 0);
   return lowest - 1;
+}
+
+// Sharing. Payloads from a server without sharing carry none of these fields,
+// so a missing field means "mine, editable".
+/** True unless the note was shared with me by someone else. */
+export function isOwnNote(note) {
+  return note?.is_owner !== false;
+}
+
+/** Content, title and tasks are editable: mine, or shared with me as edit. */
+export function canEditNote(note) {
+  return note?.can_edit !== false;
+}
+
+/** Shared in either direction: its images load through the note. */
+export function isSharedNote(note) {
+  return note?.is_owner === false || !!note?.is_shared;
+}
+
+/** "Shared · 2" on my note, the owner's name on one shared with me, else ''. */
+export function shareBadge(note) {
+  if (!isOwnNote(note)) return note?.shared_by || 'Shared';
+  const count = Array.isArray(note?.shared_with) ? note.shared_with.length : 0;
+  return count ? `Shared · ${count}` : '';
 }
 
 // Reminder text, the same rules as the server's `reminder_body` (checked

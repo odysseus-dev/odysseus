@@ -5,13 +5,15 @@ export function createCardReorder({
   persistOrder,
   state
 }) {
-  function _wireCardReorder(body) {
-    lifecycle.release(body);
+  /** `scope`: one card re-rendered in place; the grid's listeners stay. */
+  function _wireCardReorder(body, scope = body) {
+    const whole = scope === body;
+    if (whole) lifecycle.release(body);
     // Drag-reorder notes on pointer/mouse devices. Mobile uses the custom
     // placeholder sorter below `_bindLongPressDrag`; native HTML5 dragging is
     // unreliable on touch browsers and can compete with the long-press flow.
     if (!_isNotesMobileMode()) {
-      body.querySelectorAll('.note-card').forEach(card => {
+      scope.querySelectorAll('.note-card').forEach(card => {
         card.addEventListener('dragstart', (e) => {
           if (e.target.closest('.note-checkbox, .note-card-x, .note-card-select, .note-card-pin, .note-card-action, .note-card-color-dot, .note-card-title, .note-card-edit, .note-card-edit-corner, .note-card-done, .note-card-corner-menu, .note-agent-tag, .note-card-label-chip')) {
             e.preventDefault();
@@ -32,6 +34,7 @@ export function createCardReorder({
         });
       });
     }
+    if (!whole) return;
     // Track which card we last swapped with so a single hover-over triggers
     // one swap, not a jitter as the pointer keeps moving inside the same card.
     let _lastSwapId = null;

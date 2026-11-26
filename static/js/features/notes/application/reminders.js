@@ -30,7 +30,8 @@ export function createNotesReminders({
     const fired = _loadFiredReminders();
     let changed = false;
     for (const note of state.notes) {
-      if (!note.due_date || note.archived) continue;
+      // Reminders are the owner's: a shared note never fires here.
+      if (!note.due_date || note.archived || note.is_owner === false) continue;
       if (!_hasTimeComponent(note.due_date)) continue;
       if (fired.has(note.id)) continue;
       const due = new Date(note.due_date).getTime();
@@ -113,7 +114,7 @@ export function createNotesReminders({
   }
 
   function _countDueReminders() {
-    return state.notes.filter(n => !n.archived && _isDueTodayOrOverdue(n.due_date, clock) && !_isNoteFullyDone(n)).length;
+    return state.notes.filter(n => !n.archived && n.is_owner !== false && _isDueTodayOrOverdue(n.due_date, clock) && !_isNoteFullyDone(n)).length;
   }
 
   function _countFiredReminders() {
@@ -121,7 +122,7 @@ export function createNotesReminders({
     // and which fired after the last user dismissal.
     const now = clock.now();
     return state.notes.filter(n => {
-      if (n.archived || _isNoteFullyDone(n)) return false;
+      if (n.archived || n.is_owner === false || _isNoteFullyDone(n)) return false;
       if (!n.due_date || !_hasTimeComponent(n.due_date)) return false;
       const t = new Date(n.due_date).getTime();
       if (isNaN(t) || t > now) return false;

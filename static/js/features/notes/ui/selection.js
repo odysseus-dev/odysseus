@@ -1,4 +1,10 @@
 /** Selection controls and view feedback for accepted attachments. */
+import { isOwnNote } from '../domain/noteRules.js';
+
+// Only my own notes can be selected: a shared note's card has no checkbox,
+// and the bulk actions (attach, archive, delete) are the owner's.
+const selectable = notes => notes.filter(isOwnNote);
+
 export function createSelection({
   operations,
   _renderNotes,
@@ -40,7 +46,8 @@ export function createSelection({
     if (sendAgentBtn) sendAgentBtn.disabled = count === 0;
     if (archiveBtn) archiveBtn.disabled = count === 0;
     if (deleteBtn) deleteBtn.disabled = count === 0;
-    if (allEl) allEl.checked = state.notes.length > 0 && state.notes.every(n => state.selectedIds.has(n.id));
+    const own = selectable(state.notes);
+    if (allEl) allEl.checked = own.length > 0 && own.every(n => state.selectedIds.has(n.id));
     // Toggle select-mode class so todo dots don't react to hover
     const pane = document.getElementById('notes-pane');
     if (pane) pane.classList.toggle('notes-select-mode', count > 0);
@@ -48,7 +55,7 @@ export function createSelection({
 
   function wireSelectionActions() {
     document.getElementById('notes-select-all').addEventListener('change', e => {
-      if (e.target.checked) state.notes.forEach(n => app.selectId(n.id));
+      if (e.target.checked) selectable(state.notes).forEach(n => app.selectId(n.id));
       else app.clearSelection();
       _renderNotes(); _updateBulkBar();
     });

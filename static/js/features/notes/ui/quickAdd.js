@@ -29,8 +29,7 @@ export function createQuickAdd({
     input.addEventListener('input', expand);
     wrap.querySelector('[data-action="photo"]').addEventListener('click', (e) => {
       e.stopPropagation();
-      openNewNote({ text: '' });
-      requestAnimationFrame(() => document.querySelector('.note-window-toolbar [data-md="image"]')?.click());
+      openNewNote({ text: '', pickImage: true });
     });
   }
 

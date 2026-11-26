@@ -48,7 +48,7 @@ test('Reload preserves the draft until a server copy is available', async () => 
   assert.equal(storage.get(key), backup);
   await session.resolveConflict('reload');
   assert.equal(session.conflict, null);
-  assert.equal(session.base, 'r2');
+  assert.equal(session.revision, 'r2');
   assert.equal(storage.has(key), false);
 });
 

@@ -3153,16 +3153,6 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
 .note-window-banner span { flex: 1; }
 .note-window-toolbar[data-mode="source"] [data-md]:not([data-md="source"]) { opacity: 0.3; pointer-events: none; }
 .note-window-toolbar [data-md].active { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); border-radius: 5px; }
-.note-window-hint { padding: 6px 16px 0; font-size: 11px; opacity: 0.7; }
-.note-window-hint button {
-  background: none;
-  border: none;
-  padding: 0;
-  color: inherit;
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
 #note-window-modal .note-window-scroll {
   flex: 1;
   overflow-y: auto;
@@ -3221,17 +3211,30 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
 .note-window-body li[data-indent="2"] { margin-left: 32px; }
 .note-window-body li[data-indent="3"] { margin-left: 48px; }
 .note-window-body .md-note-image { max-width: 100%; border-radius: 8px; }
+/* A resized image: `w=N` in its markdown, `data-w` on the <img> (notes keep
+   no inline style). The size menu's S and M are exact in every browser; any
+   other width comes from attr() where the browser supports typed attr(). */
+.md-note-image[data-w] { width: attr(data-w %, auto); }
+.md-note-image[data-w="33"] { width: 33%; }
+.md-note-image[data-w="66"] { width: 66%; }
 /* Links read like the card's links. */
 .note-window-body a { color: var(--accent-primary, var(--red)); text-decoration: underline; }
 /* A click opens a link, even while editing (see richBody.js). */
-.note-window-body a[href] { cursor: pointer; }
-/* A block only Markdown source can edit (math, raw HTML, an aligned table). */
-.note-window-body .note-md-locked {
-  outline: 1px dashed var(--border);
-  outline-offset: 3px;
+.note-window-body a[href]:not([data-md-image]) { cursor: pointer; }
+/* An island: math, a diagram, a <details>, edited as its own markdown. It
+   sits in the text like one character; a click opens its source. */
+.note-window-body .md-island {
+  border: 1px solid transparent;
   border-radius: 4px;
-  cursor: default;
 }
+.note-window-body[contenteditable="true"] .md-island { cursor: pointer; }
+.note-window-body[contenteditable="true"] .md-island:hover,
+.note-window-body .md-island:focus-visible { border-color: var(--border); outline: none; }
+div.md-island { display: block; }
+/* Highlight takes the theme's warning tint, as the window's banner does. */
+.note-window-body mark,
+.note-card mark { background: color-mix(in srgb, var(--warn) 30%, transparent); color: inherit; border-radius: 2px; }
+.note-island-input { resize: vertical; min-width: 240px; }
 .note-window-meta {
   margin-top: 14px;
   padding-top: 8px;
@@ -3241,7 +3244,53 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   text-align: center;
 }
 .note-window-meta:empty { display: none; }
-.note-window-sketch { margin-top: 10px; }
+/* "Agent edited … · Undo": a plain text button in the meta line's own type. */
+.note-window-meta-undo {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.note-window-sketch,
+.note-window-history { flex: 1; overflow-y: auto; padding: 12px 16px 14px; }
+.note-window-sketching .note-window-toolbar,
+.note-window-sketching .note-window-scroll,
+.note-window-browsing .note-window-toolbar,
+.note-window-browsing .note-window-scroll { display: none; }
+/* History: the versions in a bordered list, the chosen one in full below. */
+.note-window-history-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+.note-window-history-head .note-reminder-menu-title { padding-left: 0; }
+.note-window-history-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px 0; }
+.note-window-history-list .note-reminder-menu-item.active { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.note-window-history-preview { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+/* A change row: the sentence may wrap; the time stays on its line. */
+.note-window-history-row { align-items: flex-start; gap: 8px; text-align: left; }
+.note-window-history-row > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.note-window-history-row .note-reminder-menu-sub { flex: none; margin-left: 0; white-space: nowrap; }
+.note-window-history-day { border-top: 1px solid var(--border); margin-top: 4px; }
+.note-window-history-by { margin-bottom: 6px; }
+.note-window-history-caption { opacity: 0.7; margin-bottom: 6px; }
+/* What undoing up to a change would do: lines that go struck through in red, lines that come back highlighted. */
+.note-window-history-field { margin-bottom: 4px; overflow-wrap: anywhere; }
+.note-window-history-field-name { opacity: 0.6; }
+.note-window-history-diff { border: 1px solid var(--border); border-radius: 8px; padding: 6px 0; overflow-x: auto; }
+.note-window-history-line { padding: 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-window-history-mark { opacity: 0.6; }
+.note-window-history-line.note-window-history-del,
+.note-window-history-field .note-window-history-del {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  color: color-mix(in srgb, var(--red) 55%, var(--fg));
+  text-decoration: line-through;
+}
+.note-window-history-line.note-window-history-add,
+.note-window-history-field .note-window-history-add {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  font-weight: 600;
+}
+.note-window-history-gap { padding: 0 10px; opacity: 0.45; }
 .note-window-sketch-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 .note-window-footer {
   display: flex;
@@ -3293,7 +3342,9 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   outline: none;
 }
 .note-window-tag-input:focus { border-bottom-color: var(--border); }
-.note-link-input {
+.note-link-input,
+.note-link-title,
+.note-island-input {
   width: 100%;
   box-sizing: border-box;
   padding: 6px 8px;
@@ -3348,7 +3399,129 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   .note-window-title,
   .note-window-source,
   .note-window-tag-input,
-  .note-link-input { font-size: 16px; }
+  .note-link-input,
+  .note-link-title,
+  .note-island-input { font-size: 16px; }
+}
+
+/* Inline note images: tap one to size it (S / M / L) or remove it. */
+.note-window-body .md-note-image { vertical-align: top; }
+.note-window-body[contenteditable="true"] .md-note-image { cursor: pointer; }
+.note-image-menu { min-width: 160px; }
+.note-image-menu-sizes { display: flex; gap: 2px; padding: 0 6px; }
+.note-image-menu-sizes .note-reminder-menu-item { justify-content: center; border-radius: 6px; }
+.note-image-menu .note-reminder-menu-item.active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+
+/* Sharing: the owner's Share button and popover, badges on shared cards, the
+   "Shared with me" section, and the read-only states for collaborators. */
+.note-window-share { width: auto; min-width: 30px; gap: 2px; }
+.note-window-share.has-date { color: var(--accent-warm); }
+.note-window-share-count:empty { display: none; }
+.note-window-share-count { font-size: 10px; font-weight: 600; }
+.note-window-remind[disabled] { cursor: default; opacity: 0.4; }
+.note-window-remind[disabled]:hover { background: none; color: color-mix(in srgb, var(--fg) 58%, transparent); }
+.note-window-readonly .note-window-toolbar { display: none; }
+.note-window-collab .note-window-colors,
+.note-window-collab .note-window-tags,
+.note-window-collab .note-window-act { display: none; }
+.note-window-content.note-window-collab { --note-ring: transparent; }
+
+.note-share-menu { max-height: 60vh; overflow-y: auto; }
+.note-share-status { padding: 7px 14px; opacity: 0.7; }
+.note-share-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px 4px;
+}
+.note-share-user { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; min-width: 0; }
+.note-share-user span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-share-pills { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.note-share-pill {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.note-share-pill.active { background: color-mix(in srgb, var(--fg) 12%, transparent); color: var(--fg); }
+
+.note-card-share-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+  align-self: center;
+}
+.note-card-share-badge.incoming { color: var(--accent-warm); background: color-mix(in srgb, var(--accent-warm) 12%, transparent); }
+.note-card-readonly .md-task-box { cursor: default; }
+.notes-shared-header { margin: 4px 0 12px; }
+.notes-pane.notes-view-grid .notes-shared-header { grid-column: 1 / -1; }
+
+/* Agent actions (owner only): a button on each task row, the window's Ask
+   and "Agent chat" buttons, the Ask popover and the card's Agent tag. */
+.note-task-agent {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  padding: 2px;
+  margin-left: 2px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--fg);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+}
+.note-checkbox:hover > .note-task-agent,
+.note-window-body .md-task:hover > .note-task-agent { opacity: 0.55; }
+.note-task-agent:hover { opacity: 1 !important; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.note-task-agent:focus-visible { opacity: 1; }
+.md-task[data-done="true"] > .note-task-agent,
+.note-checkbox.done > .note-task-agent,
+.note-card-selectmode .note-task-agent { display: none; }
+.note-window-body .md-task > .note-task-agent { margin-left: auto; align-self: flex-start; margin-top: 2px; }
+/* No hover on touch: cards keep their rows clean, the window shows the button dimmed. */
+@media (hover: none) {
+  .note-card .note-task-agent { display: none; }
+  .note-window-body .md-task > .note-task-agent { opacity: 0.4; }
+}
+.note-window-agent-chat { width: auto; gap: 5px; padding: 0 8px; font-family: inherit; font-size: 12px; }
+.note-window-agent-chat:hover { color: var(--accent-warm); }
+.note-card-agent-tag { border: none; font-family: inherit; cursor: pointer; }
+.note-card-agent-tag:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 14%, transparent); }
+.note-ask-menu { width: 280px; }
+/* The item a row's popover asks about, under its title. */
+.note-ask-item { display: block; margin-left: 0; padding: 0 14px 6px; overflow-wrap: anywhere; }
+.note-ask-presets { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 14px 6px; }
+
+/* A collaborator's only footer action: Leave, where the owner has Delete.
+   The card menu that also offers it is hidden by the cards' layout. */
+.note-window-collab .note-window-leave:not(.hidden) { display: inline-flex; margin-left: auto; }
+
+/* Grid with a "Shared with me" section: dense packing would fill gaps above
+   the full-width header with shared cards. Sparse placement never goes back
+   before an earlier item, so shared cards stay below it. */
+.notes-pane.notes-view-grid .notes-pane-body:has(> .notes-shared-header) { grid-auto-flow: row; }
+
+/* Phones: the search and quick-add inputs at 16px, so iOS does not zoom
+   the page when one takes focus (the note window's inputs already are). */
+@media (max-width: 768px) {
+  .notes-search-bar .memory-search-input,
+  .notes-quick-input { font-size: 16px; }
 }
 
 /* Phones: the note window's toolbar is one row that scrolls sideways, with
@@ -3372,12 +3545,14 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   #note-window-modal .note-window-footer { flex-wrap: nowrap; overflow-x: auto; column-gap: 14px; }
 }
 
-/* Touch screens and phones: every control in the note window is at least
-   44px to hit. Small marks (colour dots, a task's box, a tag's x) keep their
-   size and get an invisible 44px target; the gaps around them grow so no two
-   targets overlap. */
+/* Touch screens and phones: every control in the note window and its share
+   popover is at least 44px to hit. Small marks (colour dots, a task's box,
+   a tag's x) keep their size and get an invisible 44px target; the gaps
+   around them grow so no two targets overlap. */
 @media (pointer: coarse), (max-width: 768px) {
   #note-window-modal .note-window-icon-btn { width: 44px; height: 44px; }
+  #note-window-modal .note-window-share { width: auto; min-width: 44px; }
+  #note-window-modal .note-window-agent-chat { width: auto; }
   #note-window-modal .note-window-toolbar [data-md] { min-width: 44px; min-height: 44px; }
   #note-window-modal .note-window-colors { min-height: 44px; gap: 28px; }
   #note-window-modal .note-color-dot { position: relative; }
@@ -3391,11 +3566,110 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   .note-window-body .md-task { position: relative; min-height: 44px; }
   .note-window-body .md-task-box { position: static; }
   .note-window-body .md-task-box::before { content: ''; position: absolute; top: 0; bottom: 0; left: -14px; width: 44px; inset-inline-end: auto; }
+  .note-window-body .md-task > .note-task-agent { min-width: 44px; min-height: 44px; margin-top: 0; }
+  .note-share-user { min-height: 44px; }
+  /* 16px so iOS does not zoom the page when the username field takes focus. */
+  .note-share-name { font-size: 16px; min-height: 44px; }
+  .note-share-pill { position: relative; min-width: 44px; }
+  .note-share-pill::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
 }
 
-/* Phones: the search and quick-add inputs at 16px, so iOS does not zoom
-   the page when one takes focus (the note window's inputs already are). */
-@media (max-width: 768px) {
-  .notes-search-bar .memory-search-input,
-  .notes-quick-input { font-size: 16px; }
+/* Notes in the chat's context, above the composer (contextStrip.js): the
+   Notes panel's cards, one row that scrolls sideways past three. Nothing
+   shows when the chat carries no note. */
+.notes-context-strip {
+  display: flex;
+  gap: 8px;
+  max-width: 800px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 2px 8px 8px;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  align-items: stretch;
 }
+.notes-context-strip[hidden] { display: none; }
+.notes-context-strip .notes-context-card {
+  flex: 0 0 calc((100% - 16px) / 3);
+  min-width: 0;
+  min-height: 0;
+  padding-right: 14px;
+  cursor: pointer;
+  scroll-snap-align: start;
+  overflow-wrap: anywhere;
+}
+.notes-context-strip .notes-context-card:focus-visible { outline: 1px solid var(--accent, var(--red)); outline-offset: 1px; }
+.notes-context-strip .note-card-title:hover { opacity: 1; }
+.notes-context-strip .notes-context-excerpt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+}
+.notes-context-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.5;
+  padding: 2px;
+  cursor: pointer;
+}
+.notes-context-remove:hover { opacity: 1; }
+/* A sent message's context notes reuse the attachment cards. */
+.context-note-card {
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+.context-note-card:hover { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+@media (max-width: 768px) {
+  .notes-context-strip .notes-context-card { flex-basis: 70%; padding-right: 16px; }
+  .notes-context-remove { min-width: 44px; min-height: 44px; margin: -12px -12px -12px 0; }
+}
+/* The note a chat was started from, at the top of the conversation. */
+.notes-chat-note {
+  align-self: stretch;
+  width: 100%;
+  margin: 8px 0;
+  box-sizing: border-box;
+}
+.notes-chat-note-label {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-bottom: 4px;
+}
+.notes-chat-note .notes-context-card { cursor: pointer; padding-right: 14px; min-height: 0; }
+.notes-chat-note .notes-context-card:focus-visible { outline: 1px solid var(--accent, var(--red)); outline-offset: 1px; }
+.notes-chat-note .note-card-title:hover { opacity: 1; }
+.notes-chat-note .notes-context-excerpt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: normal; }
+/* A note image whose file is not on this server (noteImages.js): its
+   description in a frame where the image would be. */
+.note-image-missing-src { display: none !important; }
+.note-image-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: min(100%, 160px);
+  min-height: 48px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-size: 12px;
+  vertical-align: top;
+  user-select: none;
+}
+.note-image-missing svg { flex-shrink: 0; }
+.note-image-missing > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-window-body[contenteditable="true"] .note-image-missing { cursor: pointer; }
+.note-card .note-image-missing { display: flex; margin: 4px 0; }

@@ -511,6 +511,8 @@ def setup_session_routes(
                     "mode": s.mode,
                     "thinking_mode": s.thinking_mode or "off",
                     "message_count": s.message_count or 0,
+                    # The note this chat was started from (always in its context).
+                    "note_scope_id": getattr(s, "note_scope_id", None),
                 })
         finally:
             db.close()
@@ -528,9 +530,34 @@ def setup_session_routes(
         api_key: str = Form(""),
         endpoint_id: str = Form(""),
         cwd: str = Form(None),
+        note_id: str = Form(""),
+        note_focus_task: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
         user = effective_user(request)
+        # A chat started from a note: its agent may change that note only
+        # (core.note_agent_scope). Runs are the owner's, so only the owner's
+        # own note can be named here.
+        scope_note_id = (note_id or "").strip()
+        # The todo a per-item run is about, kept with the scope so every turn
+        # of the chat shows it; it means nothing without a note.
+        from core.note_agent_scope import parse_note_focus_task
+        try:
+            # Called directly (tests, internal callers), the parameter's
+            # default is FastAPI's Form marker rather than "".
+            scope_focus_task = parse_note_focus_task(note_focus_task if isinstance(note_focus_task, str) else "")
+        except ValueError:
+            raise HTTPException(400, "Invalid note_focus_task")
+        if scope_focus_task and not scope_note_id:
+            raise HTTPException(400, "note_focus_task needs note_id")
+        if scope_note_id:
+            from core.note_agent_scope import owned_note_query
+            _db = SessionLocal()
+            try:
+                if owned_note_query(_db, user).filter_by(id=scope_note_id).first() is None:
+                    raise HTTPException(404, "Note not found")
+            finally:
+                _db.close()
         _reject_delegated_session_options(
             request,
             skip_validation=skip_val,
@@ -631,6 +658,22 @@ def setup_session_routes(
             cwd=cwd or None,
             endpoint_id=endpoint_id.strip() if endpoint_id else None,
         )
+        if scope_note_id:
+            from core.note_agent_scope import set_session_note_scope
+            _db = SessionLocal()
+            try:
+                set_session_note_scope(_db, sid, scope_note_id, scope_focus_task)
+            except Exception:
+                # A chat that cannot carry its note's scope must not run
+                # unscoped: drop it and fail the request.
+                _db.rollback()
+                try:
+                    session_manager.delete_session(sid)
+                except Exception:
+                    logger.exception("Could not remove session %s after its note scope failed", sid)
+                raise HTTPException(500, "Could not start an agent chat for this note")
+            finally:
+                _db.close()
         # Set auth headers for custom API-key endpoints
         resolved_key = request_api_key
         resolved_base = endpoint_url

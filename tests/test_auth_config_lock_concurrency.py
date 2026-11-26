@@ -80,9 +80,15 @@ def _fast_bcrypt_work_factor(monkeypatch):
 
 
 class ContentionCoordinator:
-    """Test-only coordinator that verifies observable contention on AuthManager._config_lock."""
+    """Test-only coordinator that verifies observable contention on AuthManager._config_lock.
 
-    def __init__(self, mgr, timeout=3.0):
+    create_user and rename_user take the account's lifecycle write lock before
+    _config_lock, so a contender for the same name blocks there first. Pass
+    `contested_user` to count an attempt on that account's lifecycle lock as
+    contention too.
+    """
+
+    def __init__(self, mgr, timeout=3.0, contested_user=None):
         self.mgr = mgr
         self.timeout = timeout
         self.lead_thread = None
@@ -117,6 +123,34 @@ class ContentionCoordinator:
         self._proxy = _LockProxy()
         mgr._config_lock = self._proxy
 
+        self._patched_lifecycle = False
+        if contested_user is not None:
+            contested = contested_user.strip().lower()
+            real_get = mgr._get_user_lifecycle_lock
+
+            class _LifecycleProxy:
+                def __init__(self, lock):
+                    self._lock = lock
+
+                def read_lock(self):
+                    return self._lock.read_lock()
+
+                @contextlib.contextmanager
+                def write_lock(self):
+                    if threading.current_thread() != coord.lead_thread:
+                        coord.contender_at_lock.set()
+                    with self._lock.write_lock():
+                        yield
+
+            def _get_user_lifecycle_lock(username):
+                lock = real_get(username)
+                if (username or "").strip().lower() == contested:
+                    return _LifecycleProxy(lock)
+                return lock
+
+            mgr._get_user_lifecycle_lock = _get_user_lifecycle_lock
+            self._patched_lifecycle = True
+
     def has_active_workers(self):
         return any(t.is_alive() for t in self.workers)
 
@@ -128,6 +162,9 @@ class ContentionCoordinator:
         if self.has_active_workers():
             return False
         self.mgr._config_lock = self._real_lock
+        if self._patched_lifecycle:
+            del self.mgr._get_user_lifecycle_lock
+            self._patched_lifecycle = False
         return True
 
     def abort(self):
@@ -143,7 +180,7 @@ class ContentionCoordinator:
         if not signaled:
             self.abort()
             raise AssertionError(
-                f"Contender thread did not attempt to acquire _config_lock within {self.timeout}s"
+                f"Contender thread did not attempt to acquire the contested lock within {self.timeout}s"
             )
         if self.aborted.is_set():
             raise RuntimeError("Contention coordination aborted due to worker failure")
@@ -255,7 +292,7 @@ class TestConcurrentCreateUser:
 
     def test_parallel_creates_same_username_only_one_wins(self, tmp_path):
         mgr = _fresh_auth_manager(tmp_path)
-        coord = ContentionCoordinator(mgr)
+        coord = ContentionCoordinator(mgr, contested_user="contested")
         results = []
         res_lock = threading.Lock()
 
@@ -398,7 +435,7 @@ class TestConcurrentRenameUser:
         mgr.create_user("admin", "adminpw", is_admin=True)
         mgr.create_user("old0", "pw")
         mgr.create_user("old1", "pw")
-        coord = ContentionCoordinator(mgr)
+        coord = ContentionCoordinator(mgr, contested_user="shared_new")
         results = {}
 
         class _CoordinatedUsersDict(dict):

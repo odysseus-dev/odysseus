@@ -149,6 +149,57 @@ def _run_reference_safe_cleanup(upload_handler) -> int:
         referenced_upload_hashes=referenced_hashes,
     )
 
+def resolve_upload_file_path(upload_handler, file_id: str) -> str:
+    """Path of an upload's bytes, confined to the upload directory.
+
+    Shared by `/api/upload/{id}` and the note-scoped media route; callers do
+    their own access check first.
+    """
+    from src.constants import UPLOAD_DIR
+    safe_id = secure_filename(os.path.basename(file_id))
+    if not safe_id:
+        raise HTTPException(400, "Invalid file ID")
+    root = canonical_root(getattr(upload_handler, "upload_dir", UPLOAD_DIR))
+
+    direct = os.path.normpath(os.path.join(root, safe_id))
+    if os.path.lexists(direct):
+        try:
+            canonical_direct = confine(root, direct, allow_root=False)
+        except (PathEscape, ValueError):
+            raise HTTPException(403, "Access denied")
+        if os.path.isfile(canonical_direct):
+            return canonical_direct
+        raise HTTPException(404, "File not found")
+
+    # The uploads.json record, when the handler keeps one, may point at the
+    # file directly; the walk below finds it otherwise.
+    load_index = getattr(upload_handler, "_load_upload_index", None)
+    index = load_index() if callable(load_index) else {}
+    info = next((fi for fi in index.values() if fi.get("id") == safe_id), None)
+    stored_path = (info or {}).get("path")
+    if stored_path:
+        try:
+            canonical_stored = confine(root, stored_path, allow_root=False)
+            if os.path.isfile(canonical_stored):
+                return canonical_stored
+        except (PathEscape, ValueError):
+            raise HTTPException(403, "Access denied")
+
+    for walk_root, _dirs, files in os.walk(root, followlinks=False):
+        if safe_id not in files:
+            continue
+        cand = os.path.normpath(os.path.join(walk_root, safe_id))
+        try:
+            canonical_cand = confine(root, cand, allow_root=False)
+        except (PathEscape, ValueError):
+            raise HTTPException(403, "Access denied")
+        if os.path.isfile(canonical_cand):
+            return canonical_cand
+        raise HTTPException(404, "File not found")
+
+    raise HTTPException(404, "File not found")
+
+
 def setup_upload_routes(upload_handler):
     """Setup upload routes with the provided handler"""
 
@@ -160,44 +211,7 @@ def setup_upload_routes(upload_handler):
         return is_inside(_upload_root(), path)
 
     def _resolve_upload_path(file_id: str) -> str:
-        safe_id = secure_filename(os.path.basename(file_id))
-        if not safe_id:
-            raise HTTPException(400, "Invalid file ID")
-        root = _upload_root()
-
-        direct = os.path.normpath(os.path.join(root, safe_id))
-        if os.path.lexists(direct):
-            try:
-                canonical_direct = confine(root, direct, allow_root=False)
-            except (PathEscape, ValueError):
-                raise HTTPException(403, "Access denied")
-            if os.path.isfile(canonical_direct):
-                return canonical_direct
-            raise HTTPException(404, "File not found")
-
-        info = _load_upload_info(safe_id)
-        stored_path = (info or {}).get("path")
-        if stored_path:
-            try:
-                canonical_stored = confine(root, stored_path, allow_root=False)
-                if os.path.isfile(canonical_stored):
-                    return canonical_stored
-            except (PathEscape, ValueError):
-                raise HTTPException(403, "Access denied")
-
-        for walk_root, _dirs, files in os.walk(root, followlinks=False):
-            if safe_id not in files:
-                continue
-            cand = os.path.normpath(os.path.join(walk_root, safe_id))
-            try:
-                canonical_cand = confine(root, cand, allow_root=False)
-            except (PathEscape, ValueError):
-                raise HTTPException(403, "Access denied")
-            if os.path.isfile(canonical_cand):
-                return canonical_cand
-            raise HTTPException(404, "File not found")
-
-        raise HTTPException(404, "File not found")
+        return resolve_upload_file_path(upload_handler, file_id)
 
     def _verify_upload_access(
         request: Request,

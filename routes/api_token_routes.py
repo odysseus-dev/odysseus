@@ -143,6 +143,8 @@ def setup_api_token_routes() -> APIRouter:
         if not name:
             raise HTTPException(400, "Token name is required")
         owner = get_current_user(request)
+        if owner:
+            owner = owner.strip().lower()
         scope_list = _normalize_scopes(scopes, profile)
         scopes_value = ",".join(scope_list)
 
@@ -185,7 +187,9 @@ def setup_api_token_routes() -> APIRouter:
             token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
             if not token:
                 raise HTTPException(404, "Token not found")
-            if current_user and token.owner != current_user:
+            token_owner = (getattr(token, "owner", "") or "").strip().lower()
+            current_norm = (current_user or "").strip().lower()
+            if current_user and token_owner != current_norm:
                 raise HTTPException(403, "Not your token")
             if isinstance(payload.get("name"), str) and payload["name"].strip():
                 token.name = payload["name"].strip()[:MAX_NAME_LEN]
@@ -219,7 +223,9 @@ def setup_api_token_routes() -> APIRouter:
             token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
             if not token:
                 raise HTTPException(404, "Token not found")
-            if current_user and token.owner != current_user:
+            token_owner = (getattr(token, "owner", "") or "").strip().lower()
+            current_norm = (current_user or "").strip().lower()
+            if current_user and token_owner != current_norm:
                 raise HTTPException(403, "Not your token")
             db.delete(token)
         _invalidate_cache(request)
@@ -231,9 +237,20 @@ def setup_api_token_routes() -> APIRouter:
     def list_self_tokens(request: Request):
         """List the current user's own API tokens. Cookie session only."""
         user = _require_self_token_user(request)
+        norm_user = user.strip().lower() if user else ""
         with get_db_session() as db:
+            from sqlalchemy import func, or_
+            has_clause = hasattr(getattr(ApiToken, "owner", None), "__clause_element__")
+            if has_clause:
+                owner_cond = or_(
+                    ApiToken.owner == user,
+                    ApiToken.owner == norm_user,
+                    func.lower(func.trim(ApiToken.owner)) == norm_user,
+                )
+            else:
+                owner_cond = (ApiToken.owner == user)
             tokens = db.query(ApiToken).filter(
-                ApiToken.owner == user, ApiToken.is_active == True  # noqa: E712
+                owner_cond, ApiToken.is_active == True  # noqa: E712
             ).all()
             return [
                 {
@@ -258,6 +275,8 @@ def setup_api_token_routes() -> APIRouter:
     ):
         """Create an API token for the current user. Cookie session only."""
         user = _require_self_token_user(request)
+        if user:
+            user = user.strip().lower()
         name = name.strip()[:MAX_NAME_LEN]
         if not name:
             raise HTTPException(400, "Token name is required")
@@ -294,11 +313,13 @@ def setup_api_token_routes() -> APIRouter:
     def delete_self_token(request: Request, token_id: str):
         """Delete one of the current user's own API tokens. Cookie session only."""
         user = _require_self_token_user(request)
+        norm_user = (user or "").strip().lower()
         with get_db_session() as db:
             token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
             # Return 404 for both "not found" and "not yours" so callers
             # can't probe for the existence of another user's token ids.
-            if not token or token.owner != user:
+            token_owner = (getattr(token, "owner", "") or "").strip().lower()
+            if not token or token_owner != norm_user:
                 raise HTTPException(404, "Token not found")
             db.delete(token)
         _invalidate_cache(request)

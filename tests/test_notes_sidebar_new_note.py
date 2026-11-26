@@ -41,7 +41,7 @@ def test_notes_reminder_dot_stays_before_new_note_action():
 
 def test_checklist_preview_starts_at_first_unfinished_item():
     notes = notes_source("ui/quickAdd", "ui/cardInteractions", "ui/reminderDisplay", "index")
-    start = notes.index("function _bindCardEvents(body)")
+    start = notes.index("function _bindCardEvents(body, scope = body)")
     end = notes.index("const tapToEditOrSelect", start)
     setup = notes[start:end]
 

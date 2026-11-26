@@ -25,10 +25,18 @@ import { createDrawing } from './ui/drawing.js';
 import { createClipboard } from './ui/clipboard.js';
 import { createMobileReorder } from './ui/mobileReorder.js';
 import { createRichBody } from './ui/richBody.js';
+import { watchNoteImages } from './ui/noteImages.js';
 import { createNoteTags } from './ui/noteTags.js';
 import { createNoteWindow } from './ui/noteWindow.js';
+import { createSharePopover } from './ui/sharePopover.js';
+import { createNoteAgentUi } from './ui/noteAgent.js';
+import { createContextStrip, openNoteOverChat } from './ui/contextStrip.js';
+import { createWindowRoute } from './ui/windowRoute.js';
 import { createQueries } from './application/queries.js';
 import { createAgentActions } from './application/agentActions.js';
+import { createAgentEdits } from './application/agentEdits.js';
+import { createNoteHistory } from './application/noteHistory.js';
+import { createExternalImagesSetting } from './application/externalImages.js';
 import { createDeletion } from './application/deletion.js';
 import { createNotesReminders } from './application/reminders.js';
 import { createNotesNotifications } from './infrastructure/notifications.js';
@@ -44,7 +52,7 @@ import { attachColorPicker } from '/static/js/colorPicker.js?v=20260910eyedroppe
 import { makeWindowDraggable } from '/static/js/windowDrag.js';
 import { snapModalToZone } from '/static/js/tileManager.js?v=20260910responsivebounds1';
 import { applyEdgeDock, clearDockSide } from '/static/js/modalSnap.js';
-import { topToolWindowZ, topPortalZ } from '/static/js/toolWindowZOrder.js';
+import { nextToolWindowZ, topToolWindowZ, topPortalZ } from '/static/js/toolWindowZOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from '/static/js/escMenuStack.js';
 import { bindTourHintDismiss } from '/static/js/tourHintDismiss.js';
 import { mdToHtml, noteImageSrc } from '/static/js/markdown.js';
@@ -64,7 +72,20 @@ const state = app.state;
 // made on another device.
 const noteVersions = createNoteVersions({ app });
 const api = noteVersions.track(rawApi);
-const _renderNoteMarkdown = source => mdToHtml(source, { tasks: 'interactive', images: 'notes', dialect: 'notes' });
+// The viewer's "Show external images in notes". Turning it on or off redraws
+// the cards; an open note window keeps what it opened with until reopened.
+const externalImages = createExternalImagesSetting({
+  origin: window.location.origin,
+  request: (...args) => fetch(...args),
+  onChange: () => { if (state.open) _renderNotes(); else contextStrip.changed(); },
+});
+// A note image that does not load shows a placeholder, in the window, a card
+// or the chat's note strip alike.
+watchNoteImages(document);
+// `mediaNote` is set for a shared note, whose uploads load through the note.
+// The note window's editor asks for `sourceMap` (see mdToHtml), and passes
+// the external-images setting it opened with.
+const _renderNoteMarkdown = (source, mediaNote = null, { sourceMap = false, externalImages: showExternal = externalImages.enabled() } = {}) => mdToHtml(source, { tasks: 'interactive', images: 'notes', dialect: 'notes', mediaNote, sourceMap, externalImages: showExternal });
 const lifecycle = createNotesLifecycle();
 const scheduler = { setTimeout: (...args) => setTimeout(...args), clearTimeout: id => clearTimeout(id), setInterval: (...args) => setInterval(...args), clearInterval: id => clearInterval(id) };
 const notifications = createNotesNotifications({ browser: window, notify: window.Notification, openPanel: () => openPanel(), toast: title => uiModule?.showToast?.(title) });
@@ -148,8 +169,22 @@ function _updateBulkBar(...args) { return selection._updateBulkBar(...args); }
 
 function _renderLabelsInto(...args) { return filters._renderLabelsInto(...args); }
 function _renderLoadingSkeleton(...args) { return cardRendering._renderLoadingSkeleton(...args); }
-function _renderNotes(...args) { const result = cardRendering._renderNotes(...args); noteWindow.sync(); return result; }
+function _renderNotes(...args) {
+  const result = cardRendering._renderNotes(...args);
+  noteAgentUi.wireCards(document.querySelector('#notes-pane .notes-pane-body'));
+  noteWindow.sync();
+  contextStrip.changed();
+  return result;
+}
+// Redraw only these notes' cards when the grid around them is unchanged;
+// otherwise the whole grid.
+function _renderNoteCards(ids) {
+  if (!cardRendering._renderCardsInPlace(ids)) return _renderNotes();
+  noteWindow.sync();
+  contextStrip.changed();
+}
 function _captureCardPositions(...args) { return layout._captureCardPositions(...args); }
+function _layoutCard(...args) { return layout._layoutCard(...args); }
 function _animateReflow(...args) { return layout._animateReflow(...args); }
 function _applyMasonry(...args) { return layout._applyMasonry(...args); }
 function _renderQuickAdd(...args) { return quickAdd._renderQuickAdd(...args); }
@@ -175,6 +210,7 @@ function _bindLongPressDrag(...args) { return mobileReorder._bindLongPressDrag(.
 function _sortedVisibleNotes(...args) { return queries._sortedVisibleNotes(...args); }
 function _userVisibleNotes(...args) { return queries._userVisibleNotes(...args); }
 function _agentSolveNote(...args) { return agentActions._agentSolveNote(...args); }
+function _agentTagHtml(...args) { return noteAgentUi.cardTagHtml(...args); }
 
 function _clearPastReminders(...args) { return deletion._clearPastReminders(...args); }
 const text = createText({
@@ -200,7 +236,51 @@ const toolbar = createToolbar({
   _fetchNotes,
   _applyMasonry
 });
+// Notes shared with me change on other accounts. While the panel is open and
+// the tab visible, re-read the list every 20 s, unless the open note holds
+// unsaved typing, a card is being edited or the share popover is open. A failed read keeps what is shown.
+const NOTES_REFRESH_MS = 20000;
+let _refreshTimer = null;
+const _noteKey = n => JSON.stringify([n.id, n.updated_at, n.can_edit, (n.shared_with || []).length]);
+const _noteSignature = notes => JSON.stringify((notes || []).map(_noteKey));
+// The list's ETag from the last re-read, so an unchanged list costs a 304
+// with no body. Kept per view (active or archived).
+let _refreshTag = { archived: null, etag: null };
+async function _refreshNotes() {
+  if (!state.open || state.loading || state.selectMode || document.hidden) return;
+  if (noteWindow.hasUnsaved() || sharePopover.isOpen() || noteAgentUi.isAskOpen()) return;
+  if (document.querySelector('#notes-pane .note-card [contenteditable="true"], #notes-pane input:focus')) return;
+  try {
+    const archived = state.showingArchived;
+    const res = await rawApi.listNotes(archived, { etag: _refreshTag.archived === archived ? _refreshTag.etag : null });
+    if (res.status === 304 || !res.ok) return;
+    const data = await res.json();
+    const notes = data.notes || [];
+    if (!state.open || state.showingArchived !== archived) return;
+    app.setMe(data.me);
+    _refreshTag = { archived, etag: res.headers?.get?.('ETag') || null };
+    if (_noteSignature(notes) === _noteSignature(state.notes)) return;
+    const before = new Map(state.notes.map(n => [n.id, _noteKey(n)]));
+    const agentEditsBefore = agentEdits.agentEditsOf(state.notes);
+    const changed = notes.filter(n => before.get(n.id) !== _noteKey(n)).map(n => n.id);
+    app.replaceNotes(notes);
+    // Notes edited elsewhere: their cards only, unless one appeared, went or moved.
+    _renderNoteCards(changed);
+    // An agent edit made from the chat (a follow-up turn) shows up here.
+    agentEdits.noticeInList(notes, agentEditsBefore);
+  } catch {}
+}
+function _startNotesRefresh() {
+  if (_refreshTimer) return;
+  _refreshTimer = scheduler.setInterval(_refreshNotes, NOTES_REFRESH_MS);
+}
+function _stopNotesRefresh() {
+  scheduler.clearInterval(_refreshTimer);
+  _refreshTimer = null;
+}
 const panel = createPanel({
+  _startNotesRefresh,
+  _stopNotesRefresh,
   wireToolbar: toolbar.wireToolbar,
   wireSelectionActions: () => selection.wireSelectionActions(),
   _wireNotesWindow: windowLayout._wireNotesWindow,
@@ -272,6 +352,7 @@ const filters = createFilters({
 const cardRendering = createCardRendering({
   COLORS,
   COLOR_HEX,
+  _agentTagHtml,
   _animateReflow,
   _applyMasonry,
   _bindCardEvents,
@@ -286,6 +367,7 @@ const cardRendering = createCardRendering({
   _isBgImage,
   _isDueOverdue,
   _isNotesMobileMode,
+  _layoutCard,
   _linkify,
   _loadActiveHighlights,
   _renderLabelsInto,
@@ -294,6 +376,7 @@ const cardRendering = createCardRendering({
   _sortedVisibleNotes,
   _updateRailBadge,
   _wireTodayView,
+  _wireCards: root => noteAgentUi.wireCards(root),
   state,
   uiModule
 });
@@ -315,7 +398,8 @@ const cardOperations = createCardOperations({
 const checklistOperations = createChecklistOperations({
   app,
   api,
-  effects: { render: _renderNotes, showError: (...args) => uiModule.showError(...args) }
+  uid: _uid,
+  effects: { render: _renderNotes, showError: (...args) => uiModule.showError(...args), beforeWrite: id => noteWindow.settle(id), followed: id => { if (noteWindow.isOpenOn(id)) _renderNotes(); } }
 });
 const cardInteractions = createCardInteractions({
   cardOperations,
@@ -375,6 +459,7 @@ const drawing = createDrawing({
 });
 const clipboard = createClipboard({
   _agentSolveNote,
+  _leaveNote: id => deletion.leaveNote(id),
   bindMenuDismiss,
   dismissOrRemove,
   state,
@@ -393,43 +478,121 @@ const queries = createQueries({
   state
 });
 const agentActions = createAgentActions({
-  _patchNote,
-  _renderNotes,
   api,
   app,
-  createFormData: () => new FormData(),
   state,
-  streamComplete: sid => { try { window.sessionModule?.markStreamComplete?.(sid); } catch {} },
-  uiModule
+  patchNote: _patchNote,
+  createFormData: () => new FormData(),
+  sessions: {
+    markStreamComplete: sid => { try { window.sessionModule?.markStreamComplete?.(sid); } catch {} },
+    open: async sid => {
+      const sessions = window.sessionModule;
+      if (!sessions?.selectSession) throw new Error('sessions unavailable');
+      await sessions.loadSessions?.().catch(() => {});
+      await sessions.selectSession(sid);
+    },
+  },
+  // Opening the agent chat leaves Notes: the note window closes (pending
+  // edits are flushed) and so does the panel.
+  closeNotes: async () => { await noteWindow.close(); panel.closePanel(); },
+  effects: {
+    render: () => _renderNotes(),
+    showToast: (...args) => uiModule.showToast(...args),
+    showError: (...args) => uiModule.showError(...args),
+    agentEdited: id => agentEdits.edited(id),
+  }
+});
+const noteAgentUi = createNoteAgentUi({
+  state,
+  actions: agentActions,
+  esc: _esc,
+  bindMenuDismiss,
+  dismissOrRemove,
+  portalZ: () => topPortalZ()
 });
 const deletion = createDeletion({
   app,
   _deleteNoteApi,
+  _leaveNoteApi: id => rawApi.unshare(id, state.me),
   _fetchNotes,
   _isPastReminder,
   _renderNotes,
   effects: { styledConfirm: uiModule.styledConfirm, confirm: message => confirm(message), showToast: (...args) => uiModule.showToast(...args), showError: (...args) => uiModule.showError(...args) },
   state
 });
+// A tab closed or sent to the background keeps the open note's last edits.
+window.addEventListener('pagehide', () => noteWindow.flushDraft());
+document.addEventListener('visibilitychange', () => { if (document.hidden) noteWindow.flushDraft(); });
+// Edits that failed to save while offline go up as soon as the connection is back.
+window.addEventListener('online', () => noteWindow.retry());
 // A note window swiped down on a phone is closed, not only hidden: its card opens it again.
 window.addEventListener('modal-dismissed', event => noteWindow.dismissed(event.detail?.id));
-const notesModule = { openPanel: panel.openPanel, closePanel: panel.closePanel, togglePanel: panel.togglePanel, isPanelOpen: panel.isPanelOpen, openNote: panel.openNote, newNote: quickAdd.newNote, openNotes: panel.openPanel, closeNotes: panel.closePanel, isNotesOpen: panel.isPanelOpen, refreshDueBadge: reminders.refreshDueBadge };
+/** Open a note in the note window over the chat (a context card, a note named on a sent message). */
+async function openNoteWindow(id, note = null) {
+  let known = note;
+  if (!known && !state.notes.some(n => n.id === id)) {
+    try { known = await rawApi.getNote(id); } catch { known = null; }
+  }
+  return openNoteOverChat(id, known, { state, app, openWindow: noteId => noteWindow.open(noteId), openInPanel: noteId => panel.openNote(noteId) });
+}
+/** `#note-<id>` (a loaded URL, Forward): open the note when this user can read it. */
+async function openNoteFromRoute(id) {
+  if (noteWindow.open(id)) return true;
+  let note = null;
+  try { note = await rawApi.getNote(id); } catch { note = null; }
+  if (!note?.id) return false;
+  return !!(await openNoteWindow(note.id, note));
+}
+// Back closes the note window, Forward opens it again.
+const windowRoute = createWindowRoute({
+  openNote: openNoteFromRoute,
+  closeWindow: () => noteWindow.closeFromHistory(),
+  isOpen: () => noteWindow.isOpen(),
+  isOpenOn: id => noteWindow.isOpenOn(id),
+});
+/** Open a note's History over the chat, on `focus` ({ sessionId }: that chat's latest agent edit). Falls back to opening the note. */
+async function openNoteHistory(id, focus = null) {
+  if (state.notes.some(n => n.id === id) && await noteWindow.showHistory(id, focus)) return true;
+  if (await openNoteWindow(id) !== 'window') return false;
+  return noteWindow.showHistory(id, focus);
+}
+const notesModule = { openNoteWindow, openNoteHistory, contextNotes: () => contextStrip.current(), openPanel: panel.openPanel, closePanel: panel.closePanel, togglePanel: panel.togglePanel, isPanelOpen: panel.isPanelOpen, openNote: panel.openNote, newNote: quickAdd.newNote, openNotes: panel.openPanel, closeNotes: panel.closePanel, isNotesOpen: panel.isPanelOpen, refreshDueBadge: reminders.refreshDueBadge };
 const publicOpenPanel = panel.openPanel, publicClosePanel = panel.closePanel, publicTogglePanel = panel.togglePanel, publicIsPanelOpen = panel.isPanelOpen, publicOpenNote = panel.openNote, publicNewNote = quickAdd.newNote, publicRefreshDueBadge = reminders.refreshDueBadge, publicDismissFiredReminderDot = reminders.dismissFiredReminderDot;
 export { publicOpenPanel as openPanel, publicClosePanel as closePanel, publicTogglePanel as togglePanel, publicIsPanelOpen as isPanelOpen, publicOpenNote as openNote, publicNewNote as newNote, publicRefreshDueBadge as refreshDueBadge, publicDismissFiredReminderDot as dismissFiredReminderDot, publicOpenPanel as openNotes, publicClosePanel as closeNotes, publicIsPanelOpen as isNotesOpen };
-export function startNotesBackground() { reminders.start(); }
+export function startNotesBackground() {
+  reminders.start();
+  contextStrip.start();
+  windowRoute.start();
+  externalImages.bind(document.getElementById('set-notes-external-images'), {
+    showError: (...args) => uiModule.showError(...args),
+    showToast: (...args) => uiModule.showToast(...args),
+  });
+  externalImages.load();
+}
 export default notesModule;
 const richBody = createRichBody({
   renderMarkdown: _renderNoteMarkdown,
   bindMenuDismiss,
   dismissOrRemove,
-  pickImage: () => _pickCustomBgImage().then(url => (url ? _uploadPath(url) : null)),
-  sketch: insert => noteWindow.openSketch(insert)
+  pickImageFile: () => colors._pickImageFile(),
+  uploadImages: files => colors._uploadImages(files).then(({ urls, rateLimited }) => ({ urls: urls.map(_uploadPath), rateLimited })),
+  sketch: insert => noteWindow.openSketch(insert),
+  showError: (...args) => uiModule.showError(...args),
+  portalZ: () => topPortalZ(),
+  externalImages: () => externalImages.enabled(),
 });
 const noteTags = createNoteTags({
   esc: _esc,
   attrEsc: (...args) => text._attrEsc(...args),
   bindMenuDismiss,
   dismissOrRemove
+});
+const sharePopover = createSharePopover({
+  api: rawApi,
+  esc: _esc,
+  bindMenuDismiss,
+  dismissOrRemove,
+  portalZ: () => topPortalZ()
 });
 const noteWindow = createNoteWindow({
   app,
@@ -440,16 +603,21 @@ const noteWindow = createNoteWindow({
   dismissOrRemove,
   richBody,
   noteTags,
-  createSession: ({ note, collect, effects }) => createNoteSession({
+  sharePopover,
+  agentUi: noteAgentUi,
+  agentActions,
+  createSession: ({ note, collect, readOnly, effects }) => createNoteSession({
     api: rawApi,
     persistence,
     scheduler,
     clock,
     note,
     collect,
+    readOnly,
     effects,
     // An edited note moves to the top of its section, as Save used to do.
-    firstWrite: () => (note?.pinned ? {} : { sort_order: noteRules.topSortOrder(state.notes, note?.id) }),
+    // Ordering is the owner's: a collaborator's edit does not move the note.
+    firstWrite: () => (note?.pinned || !noteRules.isOwnNote(note) ? {} : { sort_order: noteRules.topSortOrder(state.notes, note?.id) }),
   }),
   wireReminderPicker: _wireReminderPicker,
   drawing,
@@ -458,16 +626,31 @@ const noteWindow = createNoteWindow({
   attrEsc: (...args) => text._attrEsc(...args),
   isMobile: _isNotesMobileMode,
   isLocalVersion: noteVersions.isLocal,
+  navigation: {
+    opened: id => windowRoute.opened(id),
+    created: id => windowRoute.created(id),
+    closed: () => windowRoute.closed(),
+  },
+  raise: modal => modal.style.setProperty('z-index', String(nextToolWindowZ({ exclude: modal, current: getComputedStyle(modal).zIndex })), 'important'),
   effects: {
     render: () => _renderNotes(),
+    renderNote: id => _renderNoteCards([id]),
+    showToast: (...args) => uiModule.showToast(...args),
     showError: (...args) => uiModule.showError(...args),
-    showToast: (...args) => uiModule.showToast?.(...args),
     archive: id => _archiveNoteById(id),
     unarchive: id => cardOperations.unarchive(id),
     confirmDelete: () => deletion.confirmDelete(),
     deleteNote: id => deletion.deleteNow(id),
+    confirmLeave: () => deletion.confirmLeave(),
+    leaveNote: id => deletion.leaveNow(id),
     celebrate: rect => spawnConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2, 60),
     uploadPath: _uploadPath,
+    undoAgentEdit: id => agentEdits.undo(id),
+    history: {
+      list: id => noteHistory.list(id),
+      read: (id, versionId) => noteHistory.read(id, versionId),
+      restore: (id, versionId, options) => noteHistory.restore(id, versionId, options),
+    },
     // A changed reminder fires (and glows) again.
     reminderChanged: id => {
       const fired = _loadFiredReminders();
@@ -479,4 +662,50 @@ const noteWindow = createNoteWindow({
       _setReminderCardGlow(id, false);
     },
   }
+});
+const agentEdits = createAgentEdits({
+  api: rawApi,
+  app,
+  state,
+  noteWindow,
+  effects: {
+    renderNote: id => _renderNoteCards([id]),
+    showToast: (...args) => uiModule.showToast(...args),
+    showError: (...args) => uiModule.showError(...args),
+    undoIcon: _NOTE_UNDO_ICON,
+    seeChanges: (id, sessionId) => openNoteHistory(id, { sessionId }),
+  },
+});
+
+const noteHistory = createNoteHistory({
+  api: rawApi,
+  app,
+  state,
+  noteWindow,
+  clock,
+  effects: {
+    renderNote: id => _renderNoteCards([id]),
+    showToast: (...args) => uiModule.showToast(...args),
+    showError: (...args) => uiModule.showError(...args),
+    undoIcon: _NOTE_UNDO_ICON,
+  },
+});
+
+// The notes in the current chat's context, as cards above the composer.
+const contextStrip = createContextStrip({
+  api: rawApi,
+  esc: _esc,
+  // Read-only: task lines render as plain boxes, not toggles.
+  renderMarkdown: source => mdToHtml(source, { images: 'notes', dialect: 'notes', externalImages: externalImages.enabled() }),
+  colorClass: note => (note.color && !_isBgImage(note.color) && Object.hasOwn(COLOR_HEX, note.color) ? ' note-color-' + note.color : ''),
+  // The panel's list is the newest copy while it is open on active notes.
+  localNote: id => (state.open && !state.showingArchived && !state.loading ? state.notes.find(n => n.id === id) || null : null),
+  scopeNoteId: () => {
+    const sessions = window.sessionModule;
+    const sid = sessions?.getCurrentSessionId?.();
+    return sid ? (sessions.getSessions?.() || []).find(s => String(s.id) === String(sid))?.note_scope_id || null : null;
+  },
+  openNote: (id, note) => openNoteWindow(id, note),
+  removeFromContext: noteId => window.dispatchEvent(new CustomEvent('odysseus:notes-context-remove', { detail: { noteId } })),
+  scheduler,
 });

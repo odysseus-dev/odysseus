@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request, Response, HTTPException, UploadFile, Fil
 from pydantic import BaseModel
 from typing import Optional
 import asyncio
+import contextlib
 import logging
 import os
 import tempfile
@@ -181,9 +182,27 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
-        ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
-        if not ok:
+        norm_username = body.username.strip().lower()
+        users_dict = getattr(auth_manager, "users", {}) or {}
+        deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+        if norm_username in users_dict or norm_username in deleting_dict:
             raise HTTPException(409, "Username already taken")
+        try:
+            ok = await asyncio.to_thread(
+                auth_manager.create_user,
+                norm_username,
+                body.password,
+                is_admin=False,
+                clean_orphaned=True,
+            )
+        except Exception:
+            raise HTTPException(500, "Failed to initialize account; registration aborted")
+        if not ok:
+            users_dict = getattr(auth_manager, "users", {}) or {}
+            deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+            if norm_username in users_dict or norm_username in deleting_dict:
+                raise HTTPException(409, "Username already taken")
+            raise HTTPException(500, "Failed to clean up previous account data for username; registration aborted")
         return {"ok": True, "message": "Account created"}
 
     @router.post("/login")
@@ -354,9 +373,26 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
-        ok = auth_manager.create_user(body.username, body.password, body.is_admin)
-        if not ok:
+        norm_username = body.username.strip().lower()
+        users_dict = getattr(auth_manager, "users", {}) or {}
+        deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+        if norm_username in users_dict or norm_username in deleting_dict:
             raise HTTPException(409, "Username already taken")
+        try:
+            ok = auth_manager.create_user(
+                norm_username,
+                body.password,
+                body.is_admin,
+                clean_orphaned=True,
+            )
+        except Exception:
+            raise HTTPException(500, "Failed to initialize account; creation aborted")
+        if not ok:
+            users_dict = getattr(auth_manager, "users", {}) or {}
+            deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+            if norm_username in users_dict or norm_username in deleting_dict:
+                raise HTTPException(409, "Username already taken")
+            raise HTTPException(500, "Failed to clean up previous account data for username; user creation aborted")
         return {"ok": True}
 
     @router.put("/users/{username}/password")
@@ -406,115 +442,132 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, name_error)
         if old_username == new_username:
             return {"ok": True, "username": new_username, "renamed_self": old_username == user}
-        if old_username not in auth_manager.users:
-            raise HTTPException(404, "User not found")
-        if new_username in auth_manager.users:
-            raise HTTPException(409, "Username already taken")
+        # Both names stay locked from the auth change through the ownership
+        # migration and its rollback: no Notes write, deletion or second
+        # rename of either account can interleave with it. Nothing below
+        # awaits while the lock is held.
+        rename_guard = (
+            auth_manager.account_rename_guard(old_username, new_username)
+            if hasattr(auth_manager, "account_rename_guard")
+            else contextlib.nullcontext()
+        )
+        with rename_guard:
+            users_now = auth_manager.users
+            deleting_now = getattr(auth_manager, "deleting_users", {}) or {}
+            if old_username in deleting_now:
+                raise HTTPException(409, "Account is pending deletion")
+            if old_username not in users_now:
+                raise HTTPException(404, "User not found")
+            if new_username in users_now or new_username in deleting_now:
+                raise HTTPException(409, "Username already taken")
 
-        # Gate on auth first. Every mutation below is contingent on this
-        # succeeding — doing it last meant a rejected rename (e.g. reserved
-        # username) left file-backed owner fields already rewritten with no
-        # way to roll them back.
-        ok = auth_manager.rename_user(old_username, new_username, user)
-        if not ok:
-            raise HTTPException(400, "Cannot rename user")
+            # Gate on auth first. Every mutation below is contingent on this
+            # succeeding: doing it last meant a rejected rename (e.g. reserved
+            # username) left file-backed owner fields already rewritten with no
+            # way to roll them back.
+            ok = auth_manager.rename_user(old_username, new_username, user)
+            if not ok:
+                raise HTTPException(400, "Cannot rename user")
 
-        def _rollback_auth_rename() -> bool:
-            # On self-rename the admin session has already moved to the new
-            # username, so the rollback must authenticate as the new user.
-            rollback_user = new_username if user == old_username else user
+            def _rollback_auth_rename() -> bool:
+                # On self-rename the admin session has already moved to the new
+                # username, so the rollback must authenticate as the new user.
+                rollback_user = new_username if user == old_username else user
+                try:
+                    return bool(auth_manager.rename_user(new_username, old_username, rollback_user))
+                except Exception as rollback_err:
+                    logger.error(
+                        "Failed to roll back auth rename %s -> %s after owner migration failure: %s",
+                        new_username, old_username, rollback_err,
+                    )
+                    return False
+
+            # Usernames are ownership keys for user data. Rename the common
+            # owner-scoped DB rows so the account keeps access to its sessions,
+            # docs, email accounts, tasks, etc.
             try:
-                return bool(auth_manager.rename_user(new_username, old_username, rollback_user))
-            except Exception as rollback_err:
-                logger.error(
-                    "Failed to roll back auth rename %s -> %s after owner migration failure: %s",
-                    new_username, old_username, rollback_err,
+                from sqlalchemy import func
+                from core.database import (
+                    Base,
+                    EmailAccount,
+                    SessionLocal,
+                    lock_email_account_owner_mutations,
                 )
-                return False
-
-        # Usernames are ownership keys for user data. Rename the common
-        # owner-scoped DB rows so the account keeps access to its sessions,
-        # docs, email accounts, tasks, etc.
-        try:
-            from sqlalchemy import func
-            from core.database import (
-                Base,
-                EmailAccount,
-                SessionLocal,
-                lock_email_account_owner_mutations,
-            )
-            db = SessionLocal()
-            try:
-                # Email-account defaults are protected by per-owner mutex rows.
-                # A rename crosses two owner partitions, so lock both in the
-                # shared helper's canonical order before inspecting either.
-                lock_email_account_owner_mutations(
-                    db, old_username, new_username
-                )
-
-                source_default_ids = [
-                    row[0]
-                    for row in (
-                        db.query(EmailAccount.id)
-                        .filter(
-                            func.lower(EmailAccount.owner) == old_username,
-                            EmailAccount.is_default == True,  # noqa: E712
-                        )
-                        .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
-                        .all()
-                    )
-                ]
-                destination_default_ids = [
-                    row[0]
-                    for row in (
-                        db.query(EmailAccount.id)
-                        .filter(
-                            func.lower(EmailAccount.owner) == new_username,
-                            EmailAccount.is_default == True,  # noqa: E712
-                        )
-                        .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
-                        .all()
-                    )
-                ]
-                if destination_default_ids:
-                    clear_default_ids = (
-                        destination_default_ids[1:] + source_default_ids
-                    )
-                else:
-                    clear_default_ids = source_default_ids[1:]
-                if clear_default_ids:
-                    (
-                        db.query(EmailAccount)
-                        .filter(EmailAccount.id.in_(clear_default_ids))
-                        .update(
-                            {EmailAccount.is_default: False},
-                            synchronize_session=False,
-                        )
+                from core.notes_sharing import rename_shared_user
+                db = SessionLocal()
+                try:
+                    # Email-account defaults are protected by per-owner mutex rows.
+                    # A rename crosses two owner partitions, so lock both in the
+                    # shared helper's canonical order before inspecting either.
+                    lock_email_account_owner_mutations(
+                        db, old_username, new_username
                     )
 
-                for mapper in Base.registry.mappers:
-                    model = mapper.class_
-                    if not hasattr(model, "owner"):
-                        continue
-                    (
-                        db.query(model)
-                        .filter(func.lower(model.owner) == old_username)
-                        .update({"owner": new_username}, synchronize_session=False)
+                    source_default_ids = [
+                        row[0]
+                        for row in (
+                            db.query(EmailAccount.id)
+                            .filter(
+                                func.lower(EmailAccount.owner) == old_username,
+                                EmailAccount.is_default == True,  # noqa: E712
+                            )
+                            .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
+                            .all()
+                        )
+                    ]
+                    destination_default_ids = [
+                        row[0]
+                        for row in (
+                            db.query(EmailAccount.id)
+                            .filter(
+                                func.lower(EmailAccount.owner) == new_username,
+                                EmailAccount.is_default == True,  # noqa: E712
+                            )
+                            .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
+                            .all()
+                        )
+                    ]
+                    if destination_default_ids:
+                        clear_default_ids = (
+                            destination_default_ids[1:] + source_default_ids
+                        )
+                    else:
+                        clear_default_ids = source_default_ids[1:]
+                    if clear_default_ids:
+                        (
+                            db.query(EmailAccount)
+                            .filter(EmailAccount.id.in_(clear_default_ids))
+                            .update(
+                                {EmailAccount.is_default: False},
+                                synchronize_session=False,
+                            )
+                        )
+
+                    for mapper in Base.registry.mappers:
+                        model = mapper.class_
+                        if not hasattr(model, "owner"):
+                            continue
+                        (
+                            db.query(model)
+                            .filter(func.lower(model.owner) == old_username)
+                            .update({"owner": new_username}, synchronize_session=False)
+                        )
+                    # Notes shared with the account follow it to the new name.
+                    rename_shared_user(db, old_username, new_username)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
+                if not _rollback_auth_rename():
+                    logger.error(
+                        "Auth rename %s -> %s could not be rolled back after owner migration failure",
+                        old_username, new_username,
                     )
-                db.commit()
-            except Exception:
-                db.rollback()
-                raise
-            finally:
-                db.close()
-        except Exception as e:
-            logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
-            if not _rollback_auth_rename():
-                logger.error(
-                    "Auth rename %s -> %s could not be rolled back after owner migration failure",
-                    old_username, new_username,
-                )
-            raise HTTPException(500, "Failed to rename user data")
+                raise HTTPException(500, "Failed to rename user data")
 
         # Per-user prefs are JSON-backed, not SQL-backed.
         try:
@@ -745,23 +798,107 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             except Exception:
                 pass
 
-        try:
-            ok = auth_manager.delete_user(body.username, user)
-        except Exception:
-            # delete_user can touch ApiToken rows before a later auth-store write
-            # fails. Dirty the bearer cache anyway so a partial token purge does
-            # not leave already-cached tokens authenticating until restart.
+        norm_name = (body.username or "").strip().lower()
+        if not norm_name:
+            raise HTTPException(400, "Username is required")
+
+        deletion_guard = auth_manager.account_deletion_guard(norm_name) if hasattr(auth_manager, "account_deletion_guard") else contextlib.nullcontext()
+        with deletion_guard:
+            if hasattr(auth_manager, "_ensure_fresh_config"):
+                auth_manager._ensure_fresh_config()
+            can_delete = getattr(auth_manager, "can_delete_user", None)
+            users_dict = getattr(auth_manager, "users", {}) or {}
+            deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+
+            # Case A: Retry of user already in deleting tombstone or interrupted deletion
+            if norm_name not in users_dict:
+                try:
+                    from core.database import SessionLocal
+                    from core.notes_sharing import purge_notes_owned_by
+                    from core.auth import delete_api_tokens_for_user
+                    with SessionLocal() as db:
+                        purged = purge_notes_owned_by(norm_name, db=db)
+                        removed_tokens = delete_api_tokens_for_user(db, norm_name)
+                        db.commit()
+                except Exception as e:
+                    logger.error("Administrative retry failed to clean up data for %s: %s", norm_name, e)
+                    _invalidate_api_token_cache()
+                    raise HTTPException(500, "Failed to clean up account data during retry; operation aborted")
+
+                _invalidate_api_token_cache()
+                was_deleting = norm_name in deleting_dict
+                if hasattr(auth_manager, "finish_delete_user"):
+                    try:
+                        res = auth_manager.finish_delete_user(norm_name)
+                        if res is False:
+                            raise HTTPException(500, "Failed to finalize account deletion in authentication store")
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.error("Failed to finalize deletion of %s in auth store on retry: %s", norm_name, e)
+                        raise HTTPException(500, "Failed to finalize account deletion in authentication store")
+
+                if was_deleting or any(purged.values()) or removed_tokens:
+                    logger.info("Cleaned up orphaned account data on deletion retry")
+                    return {"ok": True}
+                raise HTTPException(400, "Cannot delete user")
+
+            if can_delete is not None and not can_delete(body.username, user):
+                raise HTTPException(400, "Cannot delete user")
+
+            user_backup = dict(users_dict.get(norm_name, {})) if isinstance(users_dict, dict) else {}
+            try:
+                ok = auth_manager.delete_user(norm_name, user)
+            except Exception:
+                _invalidate_api_token_cache()
+                raise
+
+            if not ok:
+                raise HTTPException(400, "Cannot delete user")
+
+            # Stage 1: Purge notes and tokens belonging to the account in a shared database transaction
+            sql_purge_committed = False
+            try:
+                from core.database import SessionLocal
+                from core.notes_sharing import purge_notes_owned_by
+                from core.auth import delete_api_tokens_for_user
+                with SessionLocal() as db:
+                    purge_notes_owned_by(norm_name, db=db)
+                    delete_api_tokens_for_user(db, norm_name)
+                    db.commit()
+                sql_purge_committed = True
+            except HTTPException:
+                _invalidate_api_token_cache()
+                if hasattr(auth_manager, "restore_user") and user_backup and not sql_purge_committed:
+                    auth_manager.restore_user(norm_name, user_backup)
+                raise
+            except Exception as e:
+                logger.error("Failed to remove notes/tokens of user %s before commit; restoring account: %s", norm_name, e)
+                _invalidate_api_token_cache()
+                if hasattr(auth_manager, "restore_user") and user_backup and not sql_purge_committed:
+                    auth_manager.restore_user(norm_name, user_backup)
+                raise HTTPException(
+                    500,
+                    "The account's notes could not be removed, so the account was kept. "
+                    "Check the server log and try again.",
+                )
+
+            # Stage 2: Finalize deletion tombstone in auth store.
+            # SQL commit has completed. Never call restore_user after SQL purge commits!
             _invalidate_api_token_cache()
-            raise
-        if not ok:
-            raise HTTPException(400, "Cannot delete user")
-        # delete_user removes the user's ApiToken rows, but the bearer-auth
-        # middleware serves from an in-memory prefix->token cache that only
-        # rebuilds when flagged dirty. Without this, a deleted user's already
-        # cached token keeps authenticating until some other token op or a
-        # restart clears the cache. Mirror what the token routes do.
-        _invalidate_api_token_cache()
-        return {"ok": True}
+            if hasattr(auth_manager, "finish_delete_user"):
+                try:
+                    res = auth_manager.finish_delete_user(norm_name)
+                    if res is False:
+                        raise HTTPException(500, "Account notes were removed, but finalizing account deletion in the authentication store failed. Please retry account deletion.")
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.error("Failed to finalize deletion of %s in auth store: %s", norm_name, e)
+                    raise HTTPException(500, "Account notes were removed, but finalizing account deletion in the authentication store failed. Please retry account deletion.")
+
+            logger.info("Removed account notes and tokens")
+            return {"ok": True}
 
     # ---- Feature visibility (admin-managed) ----
 

@@ -1917,16 +1917,22 @@ async def execute_tool_block(
             )
 
     if isinstance(security_context, ToolRunSecurityContext) and not approval_claimed:
+        # A note-started chat's gate decides by which note the call changes.
+        # Judge the id the binder resolved, the one the tool will write, not
+        # the raw reference the model sent.
+        gate_content = getattr(block, "content", None)
+        if owned_operation is not None and getattr(block, "tool_type", None) == "manage_notes":
+            gate_content = owned_operation.execution_input
         if isinstance(authority, RequestAuthority):
             with bind_request_authority(authority):
                 decision = security_context.decision_for(
                     getattr(block, "tool_type", None),
-                    getattr(block, "content", None),
+                    gate_content,
                 )
         else:
             decision = security_context.decision_for(
                 getattr(block, "tool_type", None),
-                getattr(block, "content", None),
+                gate_content,
             )
         if not decision.allowed:
             logger.warning(

@@ -79,3 +79,23 @@ test('producer events and rejection acknowledgement are wired in source', () => 
   assert.match(materialize, /currentSessionId = payload.id;[\s\S]{0,180}odysseus:session-changed/);
   assert.match(notesSource, /if \(!detail\.accepted\)/);
 });
+
+test('a context card\'s x takes that note out of the chat\'s selection only', () => {
+  const ctx = setup();
+  ctx.setSession('chat-a');
+  ctx.selected(['a', 'b']);
+  ctx.emit('odysseus:notes-context-remove', { noteId: 'a' });
+  assert.deepEqual(ctx.lastRendered(), ['b']);
+  ctx.emit('odysseus:notes-context-remove', { noteId: 'b' });
+  assert.deepEqual(ctx.lastRendered(), []);
+  ctx.emit('odysseus:session-changed', { sessionId: 'chat-a' });
+  assert.deepEqual(ctx.lastRendered(), []);
+  ctx.setSession(null, true);
+  ctx.selected(['c', 'd']);
+  ctx.emit('odysseus:notes-context-remove', { noteId: 'd' });
+  assert.deepEqual(ctx.lastRendered(), ['c']);
+  // The pending chat keeps the shorter selection when it is created.
+  ctx.setSession('chat-b');
+  ctx.emit('odysseus:session-changed', { sessionId: 'chat-b', materialized: true });
+  assert.deepEqual(ctx.lastRendered(), ['c']);
+});

@@ -829,3 +829,75 @@ def test_note_calendar_and_document_routes_reserve_before_database_writes(monkey
     assert document_handler.calls == [
         (upload_id, {"owner": "alice", "allow_admin": False})
     ]
+
+
+def test_inline_note_images_are_kept_until_their_reference_is_removed(
+    tmp_path,
+    monkeypatch,
+):
+    """An image that lives only in a note's markdown body (sized or not) is
+    retained; once the editor removes it (Remove, or undo of an insert) the
+    upload has no reference left and cleanup can collect it."""
+    from routes import upload_routes
+
+    handler = _make_handler(tmp_path)
+    sized_id = "c" * 32 + ".png"
+    plain_id = "d" * 32 + ".jpg"
+    removed_id = "e" * 32 + ".png"
+    paths = _seed_old_uploads(handler, [
+        {"id": sized_id, "hash": "3" * 64, "mime": "image/png"},
+        {"id": plain_id, "hash": "4" * 64, "mime": "image/jpeg"},
+        {"id": removed_id, "hash": "5" * 64, "mime": "image/png"},
+    ])
+    SessionLocal, engine, tmpfile = make_temp_sqlite(Base.metadata)
+    db = SessionLocal()
+    try:
+        db.add(Note(
+            id="inline-images",
+            owner="alice",
+            title="Inline",
+            content=f'Before\n\n![](/api/upload/{sized_id} "w=33")\n\n- [ ] task\n\n![receipt](/api/upload/{plain_id})',
+        ))
+        db.add(Note(
+            id="image-removed",
+            owner="alice",
+            title="Was an image",
+            content="The image that was here has been removed",
+        ))
+        db.commit()
+    finally:
+        db.close()
+    monkeypatch.setattr(upload_routes, "SessionLocal", SessionLocal)
+
+    try:
+        referenced_ids, _hashes = upload_routes._collect_persisted_upload_references()
+        response = asyncio.run(
+            _manual_cleanup_endpoint(handler, monkeypatch)(_AdminRequest())
+        )
+    finally:
+        engine.dispose()
+        tmpfile.close()
+        try:
+            os.unlink(tmpfile.name)
+        except OSError:
+            pass
+
+    assert {sized_id, plain_id} <= referenced_ids
+    assert removed_id not in referenced_ids
+    assert response == {"status": "success", "files_cleaned": 1}
+    assert paths[sized_id].is_file() and paths[plain_id].is_file()
+    assert not paths[removed_id].exists()
+
+
+def test_note_content_reservation_covers_inline_images(tmp_path):
+    handler = _make_handler(tmp_path)
+    inline_id = "f" * 32 + ".png"
+    _seed_old_uploads(handler, [{"id": inline_id, "hash": "6" * 64, "mime": "image/png"}])
+    content = f'Text\n\n![](/api/upload/{inline_id} "w=66")'
+
+    assert extract_internal_upload_ids(content) == {inline_id}
+    assert reserve_upload_references(handler, "alice", content) is None
+    # Reserving touches the row, so a just-inserted image is never swept
+    # between the upload and the note save that references it.
+    assert handler.get_upload_info(inline_id)["last_accessed"] != OLD_TIMESTAMP
+    assert reserve_upload_references(handler, "mallory", content) == inline_id

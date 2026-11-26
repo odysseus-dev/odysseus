@@ -64,6 +64,7 @@ export function createNotesWorkflows({
       const res = await api.listNotes(state.showingArchived);
       if (!res.ok) { if (!keepOnFailure) app.replaceNotes([]); return; }
       const data = await res.json();
+      app.setMe(data.me);
       app.replaceNotes(data.notes || data || []);
     } catch (e) {
       console.error('Failed to fetch notes:', e);

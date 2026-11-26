@@ -74,6 +74,9 @@ from src.tool_capabilities import (
     capabilities_for_action,
     capabilities_for_tool,
     messages_contain_external_untrusted_context,
+    messages_contain_untrusted_beyond_note,
+    note_scope_own_result_marker,
+    NOTE_SCOPE_OWN_RESULT_KEY,
     tool_result_is_successful,
     tool_result_should_arm_gate,
 )
@@ -16113,6 +16116,9 @@ def _append_tool_results(
                     "source": f"tool result: {tool_name}",
                     "tool_gate_untrusted": should_arm_gate,
                 }
+                own_note = note_scope_own_result_marker(tool_name, result)
+                if own_note:
+                    result_message["metadata"][NOTE_SCOPE_OWN_RESULT_KEY] = own_note
             messages.append(result_message)
         if image_blocks:
             visual_evidence = untrusted_context_message(
@@ -16156,6 +16162,14 @@ def _append_tool_results(
             tool_output_text,
             arm_tool_gate=arm_tool_gate,
         )
+        # One message carries the whole round here, so it is the note's own
+        # answer only when every call in it was on the chat's note.
+        own_notes = {
+            note_scope_own_result_marker(record.get("tool_name"), record.get("result"))
+            for record in tool_result_records
+        }
+        if tool_result_records and len(own_notes) == 1 and None not in own_notes:
+            result_message["metadata"][NOTE_SCOPE_OWN_RESULT_KEY] = own_notes.pop()
         if image_blocks:
             result_message["content"] = [
                 {"type": "text", "text": result_message["content"]},
@@ -21452,6 +21466,16 @@ async def stream_agent_loop(
             )
             or messages_contain_external_untrusted_context(messages)
         ),
+        # A taint carried over from an earlier turn or an approval keeps no
+        # source, so it counts; the skills index every run carries does not.
+        untrusted_beyond_note=(
+            bool(external_untrusted_context_seen)
+            or bool(
+                exact_approval
+                and exact_approval.pending.external_untrusted_context_seen
+            )
+            or messages_contain_untrusted_beyond_note(messages)
+        ),
         approval_gate_bypassed=_tool_approval_gate_bypassed(exact_approval),
         delegated_credential=bool(delegated_credential),
     )
@@ -25038,6 +25062,10 @@ async def stream_agent_loop(
     total_tool_calls = 0  # for budget enforcement
     _ody_notes_tool_completed = False
     _qwen_terminal_summary_completed = False
+    # A notes read (list, search, view) this turn whose result the model has
+    # not presented yet. A later notes mutation then cannot end the turn with
+    # its own one-line summary: "Item marked done" is not the list.
+    _notes_read_this_turn = False
     _tui_test_request = bool(
         _tui_local_execution_turn
         and re.search(
@@ -25923,11 +25951,15 @@ async def stream_agent_loop(
                 + "\n\n"
             )
 
+        # Links to what the approved action produced. They outlive the fixed
+        # "Done." answer below, which otherwise drops them with the draft.
+        _approved_links = ""
         approved_research_id = approved_result.get("research_session_id")
         if approved_research_id:
             approved_anchor = (
                 f"\n\n[Open in Deep Research](#research-{approved_research_id})\n"
             )
+            _approved_links += approved_anchor
             full_response += approved_anchor
             yield "data: " + json.dumps({"delta": approved_anchor}) + "\n\n"
         approved_note_id = approved_result.get("note_id")
@@ -25943,6 +25975,7 @@ async def stream_agent_loop(
             approved_anchor = (
                 f"\n\n[{approved_note_label}](#note-{approved_note_id})\n"
             )
+            _approved_links += approved_anchor
             full_response += approved_anchor
             yield "data: " + json.dumps({"delta": approved_anchor}) + "\n\n"
 
@@ -26003,12 +26036,12 @@ async def stream_agent_loop(
             )
         )
         if _approved_effectful:
-            full_response = "Done."
+            full_response = ("Done." + _approved_links).rstrip()
             # The approval question was streamed on the original request and
             # is already rendered as its own approval card. On the approval
             # continuation replace that draft instead of appending
             # "Done." to it (which produced "Allow ...?Done.").
-            yield 'data: ' + json.dumps({"type": "final_response", "content": "Done."}) + "\n\n"
+            yield 'data: ' + json.dumps({"type": "final_response", "content": full_response}) + "\n\n"
             _approved_effectful_completed = True
             _approved_result_injected = True
         _approved_terminal_summary = ""
@@ -34450,6 +34483,10 @@ async def stream_agent_loop(
                     tool_output_data["tool_args"] = _email_tool_args
             if tool_call_id:
                 tool_output_data.update({"call_id": tool_call_id, "tool_call_id": tool_call_id})
+            if block.tool_type == "manage_notes" and result.get("agent_edit") and result.get("note_id"):
+                # A chat started from a note changed it: the Notes window
+                # follows the edit and offers Undo (core.note_agent_scope).
+                tool_output_data["note_edit"] = {"note_id": result["note_id"]}
             if is_doc_tool and "action" in result:
                 tool_output_data.update({
                     "doc_id": result.get("doc_id"),
@@ -35009,7 +35046,10 @@ async def stream_agent_loop(
                 _notes_mutation_terminal = _notes_terminal_action in {
                     "add", "create", "new", "save", "remind",
                     "update", "edit", "delete", "remove", "toggle_item",
-                }
+                } and not _notes_read_this_turn
+                if (_notes_terminal_action in {"list", "search", "find", "view"}
+                        and tool_result_is_successful(result)):
+                    _notes_read_this_turn = True
             if (
                 (_ody_qwen_finetune_model or _qwen38_tool_router or _notes_mutation_terminal)
                 and _deterministic_terminal_eligible

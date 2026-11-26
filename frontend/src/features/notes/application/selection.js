@@ -19,11 +19,18 @@ export function createSelectionOperations({
       }
       exitSelection();
     }
+    /** Run `request` for each id; the toast counts what the server accepted, and says how many it refused. */
+    async function each(ids, request, done, verb) {
+      const results = await Promise.all(ids.map(id => request(id).then(() => true, () => false)));
+      const ok = results.filter(Boolean).length;
+      const failed = ids.length - ok;
+      exitSelection(); await fetchNotes(); effects.render();
+      effects.showToast(failed ? `${done} ${ok}; ${failed} could not be ${verb}` : `${done} ${ok}`);
+    }
     async function archiveSelected() {
       const ids = [...state.selectedIds];
       if (!ids.length) return;
-      await Promise.all(ids.map(id => api.patchNote(id, { archived: true }).catch(() => {})));
-      exitSelection(); await fetchNotes(); effects.render(); effects.showToast(`Archived ${ids.length}`);
+      await each(ids, id => api.patchNote(id, { archived: true }), 'Archived', 'archived');
     }
     async function deleteSelected() {
       const ids = [...state.selectedIds];
@@ -32,8 +39,7 @@ export function createSelectionOperations({
         const ok = await effects.styledConfirm(`Delete ${ids.length} note${ids.length === 1 ? '' : 's'}?`, { confirmText: 'Delete', danger: true });
         if (!ok) return;
       }
-      await Promise.all(ids.map(id => api.deleteNote(id).catch(() => {})));
-      exitSelection(); await fetchNotes(); effects.render(); effects.showToast(`Deleted ${ids.length}`);
+      await each(ids, id => api.deleteNote(id), 'Deleted', 'deleted');
     }
     return { attachSelected, archiveSelected, deleteSelected };
 }

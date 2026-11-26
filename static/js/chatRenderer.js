@@ -14,6 +14,7 @@ import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import { matchModelKey } from './model/matchKey.js';
 import { getTools } from './appConfig.js';
 import { getShowPersonaName } from './presets.js?v=20260908personaname1';
+import { HIDE_NOTE_RUN_NOTICES, noteRunDisplayText } from './features/notes/domain/noteRules.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -325,6 +326,21 @@ export function getToolActionTarget(tool, command, data = null) {
   return null;
 }
 
+/** A note edit's tool row: "See what changed" (the note's History on this chat's edit) above the call. '' for any other call. */
+export function noteEditCommandHtml(tool, command, data = null) {
+  const lower = String(tool || '').toLowerCase();
+  if (!(lower === 'manage_notes' || lower.endsWith('__manage_notes'))) return '';
+  let args = null;
+  try { args = JSON.parse(command || '{}'); } catch (_) {}
+  const action = args && args.action ? String(args.action).toLowerCase() : '';
+  if (action !== 'update' && action !== 'toggle_item') return '';
+  const id = _safeToolTargetId((data && (data.note_id || data.id)) || (args && (args.note_id || args.id)));
+  if (!id) return '';
+  const esc = uiModule.esc;
+  return `<a class="agent-thread-summary agent-thread-summary-link" href="#note-${esc(id)}" data-note-history="1" title="Open this note's history on this edit">See what changed</a>`
+    + (command ? `<pre class="agent-thread-cmd">${esc(command)}</pre>` : '');
+}
+
 export function renderToolIcon(tool, command, data = null) {
   const icon = getToolIcon(tool);
   if (!icon) return '';
@@ -432,7 +448,7 @@ function _toolDisplayInfo(tool, command, data = null) {
       commandHtml: q ? `<div class="agent-thread-summary">${uiModule.esc(q)}</div>` : '',
     };
   }
-  return { label: '', commandHtml: '' };
+  return { label: '', commandHtml: noteEditCommandHtml(tool, command, data) };
 }
 
 function _suppressRawToolOutput(tool, ok) {
@@ -484,6 +500,31 @@ function _formatSize(bytes) {
 // Build the `.attach-cards` element for a message's attachment list. Shared by
 // addMessage and updateMessageAttachments so a live (optimistic) user bubble
 // can be re-rendered with real upload ids once the upload resolves.
+const CONTEXT_NOTE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>';
+
+/** A sent message's context notes, as attachment cards. A click opens the note in the note window. */
+export function buildContextNoteCards(notes) {
+  const wrap = document.createElement('div');
+  wrap.className = 'attach-cards context-note-cards';
+  for (const note of notes) {
+    if (!note || !note.id) continue;
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'attach-card context-note-card';
+    card.dataset.contextNoteId = String(note.id);
+    const title = String(note.title || '').trim() || 'Untitled note';
+    card.title = 'Open note: ' + title;
+    card.innerHTML = CONTEXT_NOTE_ICON;
+    const name = document.createElement('span');
+    name.className = 'attach-card-name';
+    name.textContent = title;
+    card.appendChild(name);
+    card.addEventListener('click', () => { window.notesModule?.openNoteWindow?.(String(note.id)); });
+    wrap.appendChild(card);
+  }
+  return wrap;
+}
+
 export function buildAttachCards(attachments) {
   const attachWrap = document.createElement('div');
   attachWrap.className = 'attach-cards';
@@ -1898,10 +1939,16 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
     }).catch(() => {});
   } else if (kind === 'note') {
       import('./notes.js?v=20260911notesselectioncancel1').then(mod => {
+      // "See what changed" on a note edit: the note's History, on this chat's latest edit.
+      const showHistory = a.dataset && a.dataset.noteHistory && mod.default && mod.default.openNoteHistory;
       const open = mod.openNote || (mod.default && mod.default.openNote);
-      if (open) open(id);
+      if (showHistory) {
+        const sessionId = window.sessionModule?.getCurrentSessionId?.() || null;
+        Promise.resolve(showHistory(id, { sessionId })).then(ok => { if (!ok && open) open(id); }).catch(() => { if (open) open(id); });
+      } else if (open) open(id);
+      // `#note-<id>` is the open window's history entry (notes windowRoute.js): it stays.
       try {
-        if (/^#(?:note-|open=notes&note=)/.test(window.location.hash || '')) {
+        if (/^#open=notes&note=/.test(window.location.hash || '')) {
           history.replaceState(null, '', window.location.pathname + window.location.search);
         }
       } catch (_) {}
@@ -3594,7 +3641,14 @@ export function addMessage(role, content, modelName, metadata) {
         .trim();
     }
 
-	    wrap.dataset.raw = text;
+    // A note run's message carries notices meant for the model; the chat
+    // shows the request and, below it, the note and its todo. Display only:
+    // the raw text (copy, edit and resend) keeps them.
+    const rawText = text;
+    const contextNotes = role === 'user' && Array.isArray(metadata?.context_notes) ? metadata.context_notes : [];
+    if (contextNotes.length && HIDE_NOTE_RUN_NOTICES) text = noteRunDisplayText(text);
+
+	    wrap.dataset.raw = rawText;
 	    if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
     // Prepend sources box if saved in metadata
     var sourcesPrefix = '';
@@ -3623,7 +3677,7 @@ export function addMessage(role, content, modelName, metadata) {
 		    } else {
 		      b.innerHTML = sourcesPrefix + _renderAssistantBody(text, role === 'assistant' ? metadata : null) + findingsSuffix;
 		    }
-	    b.dataset.raw = text;
+	    b.dataset.raw = rawText;
 
     // The vision/OCR caption is stripped from the displayed text above (so the
     // bubble doesn't show the raw model output) but no longer rendered as an
@@ -3674,6 +3728,20 @@ export function addMessage(role, content, modelName, metadata) {
       // Render attachment cards
       if (attachments?.length) {
         b.appendChild(buildAttachCards(attachments));
+      }
+      // The notes this turn carried (Notes selected for the chat, or the note
+      // the chat was started from), with their titles as sent.
+      if (contextNotes.length) {
+        // The todo a run started from a note is about, on the chat's first
+        // message: the prompt does not name it. Later turns carry it too.
+        const focusTask = String(contextNotes[0]?.focus_task || '').trim();
+        if (focusTask && !box.querySelector('.msg-user')) {
+          const quote = document.createElement('blockquote');
+          quote.className = 'context-note-focus';
+          quote.textContent = focusTask;
+          b.appendChild(quote);
+        }
+        b.appendChild(buildContextNoteCards(contextNotes));
       }
     }
 

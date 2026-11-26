@@ -4,6 +4,7 @@ import { createNotesState } from '../frontend/src/features/notes/application/sta
 import { createNotesReminders } from '../frontend/src/features/notes/application/reminders.js';
 import { createNotesNotifications } from '../frontend/src/features/notes/infrastructure/notifications.js';
 import { createNotesPersistence, REMINDER_DISMISSED_AT_KEY } from '../frontend/src/features/notes/infrastructure/storage.js';
+import { createDeletion } from '../frontend/src/features/notes/application/deletion.js';
 
 function harness(notes = []) {
   const now = Date.parse('2024-03-10T09:00'), app = createNotesState();
@@ -114,4 +115,73 @@ test('notification denial, unsupported browsers and permission errors remain fai
   assert.equal(await denied.ensurePermission(), false);
   const failed = createNotesNotifications({ browser: { Notification: true }, notify: { permission: 'default', requestPermission: async () => { throw Error('blocked'); } } });
   assert.equal(await failed.ensurePermission(), false);
+});
+
+test('reminders are the owner\'s: a note shared with me never fires, marks, glows or counts', async () => {
+  const now = Date.parse('2024-03-10T09:00');
+  const local = value => { const d = new Date(value); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:30`; };
+  const due = local(now - 30000);
+  const h = harness([
+    { id: 'mine', due_date: due, content: 'Mine' },
+    { id: 'shared-edit', due_date: due, content: 'Theirs', is_owner: false, can_edit: true },
+    { id: 'shared-view', due_date: due, content: 'Theirs too', is_owner: false, can_edit: false },
+    { id: 'mine-shared-out', due_date: due, content: 'Mine, shared with others', is_owner: true, is_shared: true },
+  ]);
+  h.reminders._checkReminders();
+  await new Promise(setImmediate);
+  assert.deepEqual(h.fired.map(n => n.note_id), ['mine', 'mine-shared-out']);
+  assert.deepEqual([...h.persistence._loadFiredReminders()].sort(), ['mine', 'mine-shared-out']);
+  assert.deepEqual(h.highlighted, ['mine', 'mine-shared-out']);
+  assert.equal(h.reminders._countDueReminders(), 2);
+  assert.equal(h.reminders._countFiredReminders(), 2);
+});
+
+test('"Clear past" deletes only my past reminders, never a note shared with me', async () => {
+  const app = createNotesState();
+  app.replaceNotes([
+    { id: 'mine-past', due_date: 'past' },
+    { id: 'theirs-past', due_date: 'past', is_owner: false, can_edit: true },
+    { id: 'mine-future', due_date: 'future' },
+  ]);
+  const deleted = [], toasts = [];
+  const deletion = createDeletion({
+    app, state: app.state,
+    _deleteNoteApi: async id => { deleted.push(id); },
+    _fetchNotes: async () => {},
+    _isPastReminder: note => note.due_date === 'past',
+    _renderNotes: () => {},
+    effects: { styledConfirm: async () => true, showToast: message => toasts.push(message), showError: () => {} },
+  });
+  await deletion._clearPastReminders();
+  assert.deepEqual(deleted, ['mine-past']);
+  assert.deepEqual(toasts, ['Cleared 1 past reminder']);
+});
+
+test('a granted permission shows a system notification that opens Notes on click, then the toast', async () => {
+  const shown = [], toasts = [], opened = [];
+  let focused = 0;
+  function FakeNotification(title, options) { this.closed = false; shown.push({ title, ...options, instance: this }); }
+  FakeNotification.prototype.close = function close() { this.closed = true; };
+  FakeNotification.permission = 'granted';
+  const notifications = createNotesNotifications({ browser: { Notification: FakeNotification, focus: () => { focused += 1; } }, notify: FakeNotification, openPanel: () => opened.push(true), toast: title => toasts.push(title) });
+  assert.equal(await notifications.ensurePermission(), true);
+  notifications.show('Call the bank', 'Due now', 'n7');
+  assert.deepEqual(shown.map(({ title, body, tag, icon }) => ({ title, body, tag, icon })), [{ title: 'Call the bank', body: 'Due now', tag: 'note-n7', icon: '/static/favicon.ico' }]);
+  shown[0].instance.onclick();
+  assert.equal(focused, 1);
+  assert.equal(opened.length, 1);
+  assert.equal(shown[0].instance.closed, true);
+  assert.deepEqual(toasts, ['Call the bank'], 'the toast shows as well');
+});
+
+test('an undecided permission is asked for, and a throwing constructor still leaves the toast', async () => {
+  const ask = answer => createNotesNotifications({ browser: { Notification: true }, notify: { permission: 'default', requestPermission: async () => answer }, toast() {} });
+  assert.equal(await ask('granted').ensurePermission(), true);
+  assert.equal(await ask('denied').ensurePermission(), false);
+  // A constructor that throws (some mobile browsers) still leaves the toast.
+  const toasts = [];
+  const throwing = function Throwing() { throw new TypeError('Illegal constructor'); };
+  throwing.permission = 'granted';
+  createNotesNotifications({ browser: { Notification: throwing }, notify: throwing, openPanel() {}, toast: title => toasts.push(title) }).show('Pay rent', '', 'n8');
+  assert.deepEqual(toasts, ['Pay rent']);
 });

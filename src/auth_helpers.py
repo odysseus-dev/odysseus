@@ -1,10 +1,13 @@
 """Shared auth helpers used by all route files."""
 
+import logging
 import os
 from typing import Optional
 from fastapi import Request, HTTPException
 
 from src.owner_identity import auth_disabled, effective_storage_owner
+
+logger = logging.getLogger(__name__)
 
 
 def is_direct_loopback_request(request: Request) -> bool:
@@ -189,23 +192,37 @@ def require_privilege(request: Request, key: str) -> str:
     (which returns ADMIN_PRIVILEGES wholesale), so this is a no-op for
     them. In unauthenticated single-user mode (`require_user` returns ""),
     privileges aren't enforced.
+
+    With auth on, the check fails closed: no auth manager, an error reading
+    privileges, a malformed privilege record, or a key the record does not
+    carry all refuse the request instead of allowing it. Every key a route
+    checks is listed in `core.auth.DEFAULT_PRIVILEGES`, which
+    `get_privileges` merges in, so a known key is always present. With
+    AUTH_ENABLED=false the operator has opted out of accounts, and a
+    privilege that cannot be read is still allowed there, as before.
     """
     user = require_user(request)
     if not user:
         return user
+    fail_closed = not _auth_disabled()
     auth_mgr = getattr(request.app.state, "auth_manager", None)
     if auth_mgr is None:
-        return user
+        if not fail_closed:
+            return user
+        raise HTTPException(503, "Authentication service unavailable")
     try:
-        privs = auth_mgr.get_privileges(user) or {}
+        privs = auth_mgr.get_privileges(user)
     except Exception:
-        return user
+        if not fail_closed:
+            return user
+        logger.warning("Privilege lookup failed for %s; refusing %s", user, key, exc_info=True)
+        raise HTTPException(503, "Authentication service unavailable")
     if not isinstance(privs, dict):
         privs = {}
-    # True = permitted; missing key defaults to permitted (unknown privileges
-    # fail open — the UI gates display-side).
-    if not privs.get(key, True):
-        raise HTTPException(403, f"Your account is not allowed to {key.replace('_', ' ')}.")
+    allowed = privs[key] if key in privs else not fail_closed
+    if not allowed:
+        # Privilege keys read "can_<verb>": the message names the verb.
+        raise HTTPException(403, f"Your account is not allowed to {key.removeprefix('can_').replace('_', ' ')}.")
     return user
 
 

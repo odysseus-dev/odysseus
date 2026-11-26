@@ -805,6 +805,10 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
     ),
 
     # -- Testing, capture and development tooling ---------------------------
+    "ODYSSEUS_TEST_PG_URL": (
+        "Testing, capture and development tooling", INTERNAL,
+        "PostgreSQL connection URL for running concurrent database tests against a live PostgreSQL instance.",
+    ),
     "ODYSSEUS_SKIP_RUN_HINT": (
         "Testing, capture and development tooling", INTERNAL,
         "Any non-empty value suppresses the `start the server with` hint at the end "

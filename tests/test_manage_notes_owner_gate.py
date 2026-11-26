@@ -1,156 +1,129 @@
+"""manage_notes owner gate, against a disposable real database.
+
+The lookup itself is owner-scoped (owned or shared-with-you notes only), so a
+legacy null/empty-owner row or another account's note is "not found" with the
+same message as an id that does not exist.
+"""
 import asyncio
 import json
-import sys
-import types
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
+import pytest
+
+import core.database as cdb
+from core.database import Note
 from src import tool_implementations
+from tests.helpers.database import disposable_database
+
+_ID = "abc12345-existing"
 
 
-class _Query:
-    def __init__(self, note):
-        self.note = note
+@pytest.fixture
+def notes(monkeypatch, tmp_path):
+    with disposable_database(tmp_path) as factory:
+        monkeypatch.setattr(cdb, "SessionLocal", factory)
 
-    def filter(self, *args, **kwargs):
-        return self
+        def seed(owner=None, **overrides):
+            data = {
+                "id": _ID,
+                "owner": owner,
+                "title": "Original",
+                "content": "",
+                "note_type": "note",
+                "items": '[{"text":"item","done":false}]',
+            }
+            data.update(overrides)
+            with factory() as db:
+                db.add(Note(**data))
+                db.commit()
 
-    def first(self):
-        return self.note
+        def row():
+            with factory() as db:
+                return db.get(Note, _ID)
 
-
-class _Db:
-    def __init__(self, note):
-        self.note = note
-        self.deleted = []
-        self.commits = 0
-
-    def query(self, *args, **kwargs):
-        return _Query(self.note)
-
-    def delete(self, note):
-        self.deleted.append(note)
-
-    def commit(self):
-        self.commits += 1
-
-    def rollback(self):
-        pass
-
-    def close(self):
-        pass
-
-
-def _install_fakes(monkeypatch, note):
-    fake_sa_attrs = types.ModuleType("sqlalchemy.orm.attributes")
-    fake_sa_attrs.flag_modified = lambda *args, **kwargs: None
-    monkeypatch.setitem(sys.modules, "sqlalchemy.orm.attributes", fake_sa_attrs)
-
-    db = _Db(note)
-    fake_core_db = types.ModuleType("core.database")
-    fake_core_db.SessionLocal = lambda: db
-    fake_core_db.Note = MagicMock()
-    monkeypatch.setitem(sys.modules, "core.database", fake_core_db)
-    return db
+        yield seed, row
 
 
 def _run(args, owner="alice"):
     return asyncio.run(tool_implementations.do_manage_notes(json.dumps(args), owner=owner))
 
 
-def _note(owner=None, **overrides):
-    data = {
-        "id": "abc12345-existing",
-        "owner": owner,
-        "title": "Original",
-        "content": "",
-        "image_url": None,
-        "note_type": "note",
-        "color": None,
-        "label": None,
-        "items": '[{"text":"item","done":false}]',
-        "pinned": False,
-        "archived": False,
-        "due_date": None,
-    }
-    data.update(overrides)
-    return SimpleNamespace(**data)
-
-
-def test_update_rejects_legacy_null_owner_for_authenticated_owner(monkeypatch):
-    note = _note(owner=None)
-    db = _install_fakes(monkeypatch, note)
+def test_update_rejects_legacy_null_owner_for_authenticated_owner(notes):
+    seed, row = notes
+    seed(owner=None)
 
     result = _run({"action": "update", "id": "abc12345", "title": "Changed"})
 
-    assert result == {"error": "Note not found", "exit_code": 1}
-    assert note.title == "Original"
-    assert db.commits == 0
+    assert result == {"error": "Note 'abc12345' not found", "exit_code": 1}
+    assert row().title == "Original"
 
 
-def test_delete_rejects_legacy_empty_owner_for_authenticated_owner(monkeypatch):
-    note = _note(owner="")
-    db = _install_fakes(monkeypatch, note)
+def test_delete_rejects_legacy_empty_owner_for_authenticated_owner(notes):
+    seed, row = notes
+    seed(owner="")
 
     result = _run({"action": "delete", "id": "abc12345"})
 
-    assert result == {"error": "Note not found", "exit_code": 1}
-    assert db.deleted == []
-    assert db.commits == 0
+    assert result == {"error": "Note 'abc12345' not found", "exit_code": 1}
+    assert row() is not None
 
 
-def test_toggle_rejects_other_owner(monkeypatch):
-    note = _note(owner="bob")
-    db = _install_fakes(monkeypatch, note)
+def test_toggle_rejects_other_owner(notes):
+    seed, row = notes
+    seed(owner="bob")
 
     result = _run({"action": "toggle_item", "id": "abc12345", "index": 0})
 
-    assert result == {"error": "Note not found", "exit_code": 1}
-    assert json.loads(note.items)[0]["done"] is False
-    assert db.commits == 0
+    assert result == {"error": "Note 'abc12345' not found", "exit_code": 1}
+    assert "[x]" not in (row().content or "") and json.loads(row().items)[0]["done"] is False
 
 
-def test_ablation_scope_blocks_nonfixture_even_with_matching_owner(monkeypatch):
+def test_other_owner_and_missing_id_get_the_same_error(notes):
+    seed, _row = notes
+    seed(owner="bob")
+    assert _run({"action": "view", "id": "abc12345"}) == {"error": "Note 'abc12345' not found", "exit_code": 1}
+    assert _run({"action": "view", "id": "zzz99999"}) == {"error": "Note 'zzz99999' not found", "exit_code": 1}
+
+
+def test_ablation_scope_blocks_nonfixture_even_with_matching_owner(notes):
     from src.tool_routing_experiment import note_fixture_scope
-    note = _note(owner='alice')
-    db = _install_fakes(monkeypatch, note)
+    seed, row = notes
+    seed(owner="alice")
     token = note_fixture_scope.set(frozenset({'different-fixture'}))
     try:
-        result = _run({'action': 'delete', 'id': note.id})
+        result = _run({'action': 'delete', 'id': _ID})
     finally:
         note_fixture_scope.reset(token)
     assert result['exit_code'] == 1
-    assert db.deleted == [] and db.commits == 0
+    assert row() is not None
 
 
-def test_ablation_scope_allows_owned_fixture(monkeypatch):
+def test_ablation_scope_allows_owned_fixture(notes):
     from src.tool_routing_experiment import note_fixture_scope
-    note = _note(owner='alice')
-    db = _install_fakes(monkeypatch, note)
-    token = note_fixture_scope.set(frozenset({note.id}))
+    seed, row = notes
+    seed(owner="alice")
+    token = note_fixture_scope.set(frozenset({_ID}))
     try:
-        result = _run({'action': 'delete', 'id': note.id})
+        result = _run({'action': 'delete', 'id': _ID})
     finally:
         note_fixture_scope.reset(token)
     assert result['exit_code'] == 0
-    assert db.deleted == [note] and db.commits == 1
+    assert row() is None
 
 
-def test_update_allows_matching_owner(monkeypatch):
-    note = _note(owner="alice")
-    db = _install_fakes(monkeypatch, note)
+def test_update_allows_matching_owner(notes):
+    seed, row = notes
+    seed(owner="alice")
 
     result = _run({"action": "update", "id": "abc12345", "title": "Changed"})
 
     assert result["exit_code"] == 0
-    assert note.title == "Changed"
-    assert db.commits == 1
+    assert row().title == "Changed"
 
 
-def test_view_returns_full_freeform_note_content(monkeypatch):
+def test_view_returns_full_freeform_note_content(notes):
+    seed, _row = notes
     content = "First line. " + ("complete detail " * 10) + "FINAL_MARKER"
-    note = _note(owner="alice", title="Long note", content=content)
-    _install_fakes(monkeypatch, note)
+    seed(owner="alice", title="Long note", content=content, items=None)
 
     result = _run({"action": "view", "id": "abc12345"})
 

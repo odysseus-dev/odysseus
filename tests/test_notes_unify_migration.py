@@ -292,6 +292,7 @@ def test_non_sqlite_database_url_is_a_no_op(tmp_path, monkeypatch):
     monkeypatch.setattr(sqlite3, "connect", refuse)
     db._migrate_unify_notes()
     db._migrate_fold_image_url()
+    db._migrate_note_shares_cascade()
     assert opened == []
     assert list(tmp_path.iterdir()) == []
 

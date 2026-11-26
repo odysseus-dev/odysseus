@@ -24,3 +24,14 @@ test('a picture background is an upload path on this site, whatever was stored',
   assert.equal(/["<>]/.test(style), false);
   assert.equal(_dotBg('custom', `bg:/api/upload/${UPLOAD}') , url('https://tracker.example/x`).includes('tracker'), false);
 });
+
+test('an upload refused for coming too fast says so; other failures do not', async () => {
+  const uploadUrl = id => `/api/upload/${id}`;
+  const answer = res => createColors({ api: { upload: async () => res, uploadUrl } });
+  assert.deepEqual(await answer({ ok: false, status: 429 })._uploadImages([{}]), { urls: [], rateLimited: true });
+  assert.deepEqual(await answer({ ok: false, status: 500 })._uploadImages([{}]), { urls: [], rateLimited: false });
+  assert.deepEqual(await answer({ ok: true, status: 200, json: async () => ({ files: [{ id: 'a' }, null] }) })._uploadImages([{}, {}]), { urls: ['/api/upload/a'], rateLimited: false });
+  const offline = createColors({ api: { upload: async () => { throw new TypeError('offline'); }, uploadUrl } });
+  assert.deepEqual(await offline._uploadImages([{}]), { urls: [], rateLimited: false });
+  assert.deepEqual(await answer({ ok: false, status: 429 })._uploadImageFiles([{}]), [], 'the background picker still gets a list');
+});

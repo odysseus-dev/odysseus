@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1164-pr40-editor-precache';
+const CACHE_NAME = 'odysseus-v1165-pr40-editor-precache';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -221,7 +221,7 @@ const PRECACHE = [
   '/static/js/settings/visionModel.js',
   '/static/js/settings/writingStyle.js',
   '/static/js/foregroundFallbackSettings.js',
-  '/static/js/admin.js?v=20260929csssplit',
+  '/static/js/admin.js?v=20261028notesfixes',
   '/static/js/chatgptSubscriptionUsage.js',
   '/static/js/init.js?v=20260829chatstyle12',
   '/static/js/slashCommands.js?v=20260921chatgptusage1',
@@ -277,15 +277,27 @@ const PRECACHE = [
   '/static/js/features/notes/ui/mobileReorder.js',
   '/static/js/features/notes/application/queries.js',
   '/static/js/features/notes/application/agentActions.js',
+  '/static/js/features/notes/application/agentEdits.js',
   '/static/js/features/notes/application/deletion.js',
   '/static/js/features/notes/domain/noteRules.js',
   '/static/js/features/notes/domain/markdownTasks.js',
   '/static/js/features/notes/domain/markdownSerializer.js',
+  '/static/js/features/notes/domain/sourceFidelity.js',
+  '/static/js/features/notes/application/externalImages.js',
   '/static/js/features/notes/application/noteSession.js',
   '/static/js/features/notes/application/noteVersions.js',
+  '/static/js/features/notes/domain/historyText.js',
+  '/static/js/features/notes/application/noteHistory.js',
+  '/static/js/features/notes/ui/noteImages.js',
+  '/static/js/features/notes/ui/sharePopover.js',
+  '/static/js/features/notes/ui/noteAgent.js',
+  '/static/js/features/notes/domain/contextNotes.js',
+  '/static/js/features/notes/ui/contextStrip.js',
   '/static/js/features/notes/ui/richBody.js',
   '/static/js/features/notes/ui/noteTags.js',
+  '/static/js/features/notes/ui/historyPanel.js',
   '/static/js/features/notes/ui/noteWindow.js',
+  '/static/js/features/notes/ui/windowRoute.js',
   '/static/js/features/notes/index.js',
   '/static/js/features/notes/application/reminders.js',
   '/static/js/features/notes/infrastructure/notifications.js',

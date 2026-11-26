@@ -3,7 +3,8 @@
 Agents, the Codex bridge and API clients read a note's prose and its tasks
 apart (`view` prints them separately, `items` is its own field) and send the
 edited prose back on its own. That must not delete the checklist. Clearing
-it takes an explicit empty list.
+it takes an explicit empty list, and the note window, which always sends the
+whole document with its base version, writes its text as is.
 """
 import asyncio
 import json
@@ -29,6 +30,7 @@ def rest(monkeypatch, tmp_path):
 def notes(monkeypatch, tmp_path):
     with disposable_database(tmp_path) as factory:
         monkeypatch.setattr(cdb, "SessionLocal", factory)
+        monkeypatch.setattr(notes_tool, "_SEEN_VERSIONS", type(notes_tool._SEEN_VERSIONS)())
 
         def seed(content):
             with factory() as db:
@@ -48,7 +50,7 @@ def _run(args, owner="alice"):
 
 async def test_content_only_put_keeps_the_task_lines(rest):
     rest.seed("n1", "Pack light\n\n- [ ] passport\n- [x] charger")
-    r = await rest.call("PUT", "/api/notes/n1", json={"content": "Pack light, bring snacks"})
+    r = await rest.call("PUT", "/api/notes/n1", json={"body_revision": rest.revision("n1"), "content": "Pack light, bring snacks"})
     assert r.status_code == 200
     assert rest.content("n1") == "Pack light, bring snacks\n\n- [ ] passport\n- [x] charger"
     assert [i["text"] for i in r.json()["items"]] == ["passport", "charger"]
@@ -56,10 +58,10 @@ async def test_content_only_put_keeps_the_task_lines(rest):
 
 async def test_content_put_with_tasks_or_items_is_taken_as_written(rest):
     rest.seed("n2", "Intro\n- [ ] a")
-    await rest.call("PUT", "/api/notes/n2", json={"content": "New\n- [ ] b"})
+    await rest.call("PUT", "/api/notes/n2", json={"body_revision": rest.revision("n2"), "content": "New\n- [ ] b"})
     assert rest.content("n2") == "New\n- [ ] b"
     rest.seed("n3", "Intro\n- [ ] a")
-    await rest.call("PUT", "/api/notes/n3", json={"content": "Cleared", "items": []})
+    await rest.call("PUT", "/api/notes/n3", json={"body_revision": rest.revision("n3"), "content": "Cleared", "items": []})
     assert rest.content("n3") == "Cleared"
 
 

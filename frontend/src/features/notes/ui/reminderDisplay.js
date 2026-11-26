@@ -1,5 +1,5 @@
 /** Reminder badges, sticky card highlights and entry scrolling. */
-import { _isNoteFullyDone } from '../domain/noteRules.js';
+import { _isNoteFullyDone, isOwnNote } from '../domain/noteRules.js';
 import { _hasTimeComponent } from '../domain/recurrence.js';
 export function createReminderDisplay({
   _countFiredReminders,
@@ -112,7 +112,7 @@ export function createReminderDisplay({
     document.querySelectorAll('.note-card').forEach(card => {
       const id = card.dataset.noteId;
       const note = state.notes.find(n => n.id === id);
-      if (!note || note.archived || _isNoteFullyDone(note)) {
+      if (!note || note.archived || !isOwnNote(note) || _isNoteFullyDone(note)) {
         card.classList.remove('note-card-reminder-due');
         return;
       }

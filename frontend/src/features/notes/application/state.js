@@ -6,6 +6,8 @@ export function createNotesState(initial = {}) {
       viewMode: initial.viewMode || 'list', showingArchived: false, selectMode: false,
       suppressNextNoteTapId: null, labelsCollapsed: !!initial.labelsCollapsed,
       loading: false, firedDotDismissedAt: initial.firedDotDismissedAt || 0,
+      // The signed-in username from GET /api/notes; null in single-user mode.
+      me: null,
     };
     // Preserve captured note identity across asynchronous completions without
     // giving a view a writable reference to the application store.
@@ -68,6 +70,7 @@ export function createNotesState(initial = {}) {
       setLabelsCollapsed: value => { values.labelsCollapsed = value; },
       setLoading: value => { values.loading = value; },
       setFiredDotDismissedAt: value => { values.firedDotDismissedAt = value; },
+      setMe: value => { values.me = value || null; },
       replaceNotes: notes => { values.notes = notes; },
       removeNoteAt: index => readonly(values.notes.splice(index, 1)[0]),
       insertNoteAt: (index, note) => { values.notes.splice(index, 0, unwrapDeep(note)); },

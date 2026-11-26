@@ -84,6 +84,14 @@ export async function getNote(api, id) {
   return { status: response.status(), note: response.ok() ? await response.json() : null };
 }
 
+/** A body write (content, items, image, type) as another client makes it: it
+ * names the body it read, else the server answers 409. */
+export async function putBody(api, id, data) {
+  const { note } = await getNote(api, id);
+  assert.ok(note, `note ${id} to write`);
+  return api.put(`/api/notes/${id}`, { data: { ...data, body_revision: note.body_revision } });
+}
+
 export const untilNote = (api, id, accept, label) => until(() => getNote(api, id), r => accept(r.note, r.status), label).then(r => r.note);
 
 /** Upload a PNG as `account`. The upload route allows 3 requests per IP per 10 s, so a 429 is retried until the window opens. */

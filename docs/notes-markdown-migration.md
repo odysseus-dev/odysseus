@@ -21,6 +21,8 @@ or test that imports `core.database`) runs these steps, after
 3. `_migrate_note_legacy_fields_cleanup()` installs the trigger that deletes a
    note's backup row with the note, and drops backup rows already orphaned
    (see below).
+4. `_migrate_note_shares_cascade()` rebuilds a `note_shares` table that lacks
+   `ON DELETE CASCADE` (see below).
 
 They open the SQLite file named by `DATABASE_URL` directly, resolved through
 `_sqlite_db_path()`, so a driver-qualified URL such as `sqlite+pysqlite:///`
@@ -109,7 +111,7 @@ DROP TRIGGER IF EXISTS note_legacy_fields_follow_note_delete;
 - A deleted note is gone for good. The trigger
   `note_legacy_fields_follow_note_delete` (`AFTER DELETE ON notes`) removes its
   backup row on every delete path: the route, the agent tool, calendar reminder
-  cleanup, the CLI and the admin wipe. So the rollback cannot
+  cleanup, the CLI, the admin wipe and account deletion. So the rollback cannot
   bring a deleted note back.
 
 ## Idempotency and per-row isolation
@@ -133,17 +135,46 @@ pointer. The rollback backup can predate subsequent edits, so reapplying its
 URL could restore a deliberately removed image. On those installations,
 review the affected notes before using the legacy attachment or canvas controls.
 
+## `note_shares` cascade rebuild
+
+Note sharing adds the `note_shares` table, created by `create_all`. Databases
+that ran test builds of an earlier sharing design already have a `note_shares`
+table with a plain `REFERENCES notes (id)` and a differently named unique
+index, and `create_all` leaves an existing table alone. On those databases,
+deleting a shared note raised an `IntegrityError`.
+
+`_migrate_note_shares_cascade()` reads `PRAGMA foreign_key_list(note_shares)`.
+When the `note_id` foreign key has no `CASCADE`, it recreates the table from the
+current `NoteShare` model (columns, foreign key and indexes, including
+`ux_note_shares_note_user`), copies the rows that still point at an existing
+note, drops the old table and renames the new one, all in one transaction.
+
+- A missing or NULL `id`, timestamp or `permission` gets a default (`view` for
+  the permission, the least access), and an unknown permission becomes `view`.
+  Usernames are trimmed and lowercased, and duplicate grants for one account
+  collapse into one, keeping `edit` over `view`.
+- Only rows that cannot be kept are dropped: no note, no username, or a
+  duplicate. The log counts each reason, and `PRAGMA foreign_key_check` runs
+  before the commit.
+- A table that already cascades, or a database with no `note_shares` table, is
+  left alone, so the step is idempotent.
+- A failure rolls the transaction back and logs
+  `note_shares cascade migration skipped: ...`; the old table stays as it was.
+- `tests/test_note_shares_cascade_migration.py` seeds the legacy `CREATE TABLE`
+  and checks the rebuild against a fresh `create_all`.
+
 ## What keeps working
 
 | Surface | Behaviour after the migration |
 | --- | --- |
 | REST legacy fields | `items` returns derived indices, text, completion and nesting. Legacy item IDs and other properties are dropped. `note_type` is derived except for goals and drawings. The legacy `image_url` remains available for all note types. A null clears the corresponding part of the body on PUT. |
-| REST `content` | A prose-only PUT keeps the legacy attachment and, if it contains no task lines, keeps the checklist. Send `replace_content: true` with the full document to remove omitted images or tasks. |
-| Checklist routes | Toggle requires `body_revision` from the GET that supplied the index. Missing and stale tokens return 409. Append retries a competing write from the committed body. |
+| REST `content` | A prose-only PUT keeps the legacy attachment and, if it contains no task lines, keeps the checklist. Send `replace_content: true` (or `base_updated_at`) with the full document to remove omitted images or tasks. |
+| Concurrency tokens | Every note payload carries `body_revision` (a hash of the body fields) and `updated_at`. A PUT that writes the body (`content`, `items`, `image_url`, `note_type`) and the checklist toggle must send `body_revision` or `base_updated_at`; a missing or stale token is a 409 whose `detail` is `{"message", "note"}` with the current note. `body_revision` ignores metadata changes (pin, colour, order); `base_updated_at` asks for exactly that version. |
+| Checklist routes | `POST /api/notes/{id}/items/{index}/toggle` flips the line in content, by index or by the `text` the client sends, and needs a token (above). `POST /api/notes/{id}/items` appends one and needs none: a lost race re-reads the committed body and appends again. |
 | `scripts/odysseus-notes` | `list`/`show`/`search` print derived `items` and `note_type`; `create --item TEXT` (repeatable) writes task lines. |
 | Calendar writers | Event reminders from `routes/calendar_routes.py` and the `manage_calendar` tool write a task line through `items_to_markdown()` instead of `items` JSON. |
 | Reminders | `/api/notes/fire-reminder` and the scheduler's note ping share `reminder_body()`: prose, then `Pending (N):` and the open tasks, as plain text with image markdown removed. The browser's local notification follows the same rules. |
 | Daily brief | Lists open tasks from any note with task lines (it used to read only `note_type == "checklist"`), leaving out the calendar's own reminder notes. |
 | Selected-notes chat context | Sends the content verbatim plus an `Items:` block restating the tasks. |
 | `manage_notes` | Takes `checklist_items` as before (`[]` clears); `update` with `content` alone keeps the task lines; `get`/`view` print `[x] i: text` with the index and body revision `toggle_item` takes. |
-| Backups | `scripts/odysseus-backup snapshot` copies `app.db` whole, including `note_legacy_fields`. The in-app JSON export (`/api/export`) never included notes and still does not. |
+| Backups | `scripts/odysseus-backup snapshot` copies `app.db` whole, including `note_legacy_fields` and `note_shares`. The in-app JSON export (`/api/export`) never included notes and still does not. |

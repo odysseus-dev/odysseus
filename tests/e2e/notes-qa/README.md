@@ -1,15 +1,16 @@
 # Notes regression specs
 
-Two Playwright specs for the note window. Every test asserts the expected
-behaviour, so it is red while its bug is there. They are not skipped or marked
-as expected failures: each fix turns its test green.
+Two Playwright specs.
+Every test asserts the expected behaviour, so it is red while its bug is
+there. They are not skipped or marked as expected failures: each fix turns
+its test green.
 
-- `notes-qa-regressions.spec.mjs`: one test per confirmed bug in the note
-  window (a note that fails to render or to build, a fence in a quote, a
-  checklist started from the quick bar, a one-line code block on a card, phone
-  layout and keyboard, links, swipe to close).
-- `notes-edge-cases.spec.mjs`: edge cases (Backspace after a code block, paste
-  cost, Checklist on a selection, phone landscape).
+- `notes-qa-regressions.spec.mjs`: one test per confirmed bug from review
+  pass.
+- `notes-edge-cases.spec.mjs`: exploratory edge cases (Backspace after a code
+  block, stale ticks, paste cost, offline retry, phone landscape, ...).
+- `bad_model.py`: an OpenAI-compatible endpoint that fails (`/fail/v1` 500,
+  `/slow/v1` hangs, `/garbage/v1` non-JSON), for the failing-model test.
 
 ## Run
 
@@ -50,3 +51,19 @@ be an admin; `NOTES_USER` must also have a working model endpoint.
 
 Results and traces go to `$TMPDIR/odysseus-notes-qa-results` (override with
 `NOTES_QA_OUTPUT_DIR`), not into the tree.
+
+## Tests that need more setup and skip otherwise
+
+- `P1 a note run whose model fails says so`: `NOTES_FAILING_MODEL=1`, and the
+  admin's default endpoint pointed at `bad_model.py`
+  (`python tests/e2e/notes-qa/bad_model.py 7873`, then
+  `http://127.0.0.1:7873/fail/v1` as the endpoint).
+- `P2 an iPhone HEIC photo is visible in Chromium`: `NOTES_HEIC=<path to a real .heic>`.
+- `P2 a note with one 300 KB line opens in WebKit in under 3 s`: WebKit only.
+
+`P2 (intermittent) rapid taps ...` and `P2 Ctrl+Z after Checklist ...` can
+pass on a given run: the first is intermittent, the second was seen in
+exploration but not reproduced by the spec.
+
+Timing tests (`pasting 100 plain-text lines`, `one 300 KB line`) depend on
+the machine. A loaded host can turn them red on its own.
