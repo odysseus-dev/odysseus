@@ -29,6 +29,28 @@ def _owner(value):
     return str(value or "").strip().casefold()
 
 
+def _owner_created(owner):
+    """The owner account's creation stamp at admission, or None.
+
+    Stored on the authority so a long agent run that outlives its account
+    cannot write as a same-named account created later (see
+    core.auth.AuthManager.account_mutation_guard).
+    """
+    if not owner:
+        return None
+    try:
+        from src.owner_identity import auth_disabled
+        if auth_disabled():
+            return None
+        from core.auth import get_auth_manager
+        stamp = get_auth_manager().get_user_created_stamp(owner)
+    except Exception:
+        return None
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+        return None
+    return float(stamp)
+
+
 def _pairs(pairs):
     result = {}
     for key, value in pairs:
@@ -128,6 +150,8 @@ class RequestAuthority:
     job_resources: tuple[BackgroundJobResource, ...] | None = None
     browser_sessions: tuple[BrowserSessionResource, ...] | None = None
     browser_pages: tuple[BrowserPageResource, ...] | None = None
+    # The owner account's creation stamp when the request was admitted.
+    owner_created: float | None = None
 
     def __post_init__(self):
         if (not isinstance(self.request_id, str) or not self.request_id
@@ -137,7 +161,8 @@ class RequestAuthority:
                 or len({g.tool for g in self.grants}) != len(self.grants)
                 or not isinstance(self.denied, frozenset)
                 or any(not isinstance(n, str) or canonical_tool(n) != n for n in self.denied)
-                or any(type(v) is not bool for v in (self.block_all, self.disable_mcp, self.inherited))):
+                or any(type(v) is not bool for v in (self.block_all, self.disable_mcp, self.inherited))
+                or (self.owner_created is not None and type(self.owner_created) is not float)):
             raise ValueError("Malformed request authority")
         if self.resource_roots is None:
             roots = ()
@@ -286,7 +311,8 @@ class RequestAuthority:
                 "process_resources": [r.to_dict() for r in self.process_resources],
                 "job_resources": [r.to_dict() for r in self.job_resources],
                 "browser_sessions": [r.to_dict() for r in self.browser_sessions],
-                "browser_pages": [r.to_dict() for r in self.browser_pages]}
+                "browser_pages": [r.to_dict() for r in self.browser_pages],
+                "owner_created": self.owner_created}
 
     @classmethod
     def from_dict(cls, value):
@@ -322,7 +348,9 @@ class RequestAuthority:
                    tuple(ProcessResource.from_dict(r) for r in process_fields["process_resources"]),
                    tuple(BackgroundJobResource.from_dict(r) for r in process_fields["job_resources"]),
                    tuple(BrowserSessionResource.from_dict(r) for r in value["browser_sessions"]) if value["version"] >= 5 else (),
-                   tuple(BrowserPageResource.from_dict(r) for r in value["browser_pages"]) if value["version"] >= 5 else ())
+                   tuple(BrowserPageResource.from_dict(r) for r in value["browser_pages"]) if value["version"] >= 5 else (),
+                   owner_created=(float(value["owner_created"])
+                                  if type(value.get("owner_created")) in (int, float) else None))
 
 
 _BROWSER_READ_ACTIONS = frozenset({"open", "navigate", "snapshot", "text", "read", "find",
@@ -504,7 +532,8 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
             inputs = frozenset({ExactOperation.normalize(name, _json(dict(operation.args))).input})
         grants.append(OperationGrant(name, actions, inputs))
     authority = RequestAuthority(uuid4().hex, _owner(owner), str(session_id or ""),
-                                 str(workspace or ""), tuple(grants))
+                                 str(workspace or ""), tuple(grants),
+                                 owner_created=_owner_created(_owner(owner)))
     if client_runtime_context is not None:
         from src.agent_runtime.remote_resources import seal_backends
         authority = replace(authority, backend_resources=seal_backends(
