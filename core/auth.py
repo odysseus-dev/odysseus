@@ -658,6 +658,10 @@ class AuthManager:
 
     def _save(self):
         _atomic_write_json(self.auth_path, self._config, indent=2)
+        if self._config.get("users") or self._config.get("deleting"):
+            # As _load does: once accounts are on disk, a store that later
+            # disappears is a failure, not a first run.
+            self._store_established = True
         try:
             if os.path.exists(self.auth_path):
                 stat = os.stat(self.auth_path)
