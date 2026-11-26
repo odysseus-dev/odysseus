@@ -18,6 +18,7 @@ let _uploadSpinners = [];
 let _uploadAbortCtrl = null;
 let _uploading = false;
 let _lastUploadCancelled = false;
+let _lastUploadError = '';
 const _previewUrls = new WeakMap();
 
 const MAX_FILES = 10;
@@ -358,8 +359,12 @@ export async function uploadPending(opts = {}) {
       // "didn't even see them" (issue #1346). Show the server's reason and keep
       // pendingFiles so the strip re-renders for a retry (see finally below).
       let detail = '';
-      try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
-      _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
+      try {
+        const e = await res.json();
+        detail = (typeof e.detail === 'string') ? e.detail
+          : (e.detail && (e.detail.message || e.detail.error)) || e.error || '';
+      } catch (_) {}
+      _lastUploadError = detail ? ('Upload failed: ' + detail) : `Upload failed (HTTP ${res.status})`;
       return [];
     }
     const data = await res.json();
@@ -373,6 +378,7 @@ export async function uploadPending(opts = {}) {
     // callers that want it can grab it via getLastUploadedMeta(). Keep the
     // returned shape as `ids` for backward-compatibility with existing call sites.
     _lastUploadedMeta = uploaded;
+    _lastUploadError = '';
     return uploaded.map(x => x.id);
   } catch (e) {
     if (e && e.name === 'AbortError') {
@@ -380,7 +386,7 @@ export async function uploadPending(opts = {}) {
       _showToast('Upload cancelled');
       return [];
     }
-    _showToast('Upload failed: ' + (e?.message || 'network error'));
+    _lastUploadError = 'Upload failed: ' + (e?.message || 'network error');
     return [];
   } finally {
     clearTimeout(timeoutId);
@@ -495,6 +501,10 @@ export function wasLastUploadCancelled() {
   return _lastUploadCancelled;
 }
 
+export function getLastUploadError() {
+  return _lastUploadError;
+}
+
 export function cancelUpload() {
   _lastUploadCancelled = true;
   if (_uploadAbortCtrl && !_uploadAbortCtrl.signal.aborted) {
@@ -520,6 +530,7 @@ const fileHandlerModule = {
   isUploading,
   wasLastUploadCancelled,
   cancelUpload,
+  getLastUploadError,
 };
 
 export default fileHandlerModule;
