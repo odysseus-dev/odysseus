@@ -80,6 +80,38 @@ _CODE_WORKSPACE_TARGET = (
     r"source(?:s+code)?|file|component|module|feature)"
 )
 
+# Read-only OSINT requests served by the local OSIRIS MCP adapter. These stay
+# before the generic web patterns so terms such as "current" or "search" do not
+# route an OSINT lookup to ordinary web search.
+_OSIRIS_TERM = r"(?:osiris|osint|open[\s-]?source intelligence)"
+_OSINT_SUBJECT = (
+    r"(?:dns(?:\s+(?:records?|lookup))?|whois|subdomains?|"
+    r"cert(?:ificate)?\s+transparency|ip\s+(?:lookup|reputation)|"
+    r"shodan|internetdb|port\s?scan|bgp|mac\s+lookup|phone\s+lookup|"
+    r"github\s+user|breaches?|leaks?|hudson\s?rock|cves?|"
+    r"sanctions?|ofac|sanctioned|threat\s+(?:intelligence|reputation|feed)|"
+    r"earthquakes?|seismic|conflicts?|frontlines|gdelt|country\s+risk|"
+    r"region\s+dossier|space\s+weather|satellite\s+feed|satellites?|"
+    r"news\s+feed|live\s+news|market\s+feed|crypto\s+feed|"
+    r"cyber\s+(?:threats?|attacks?)|malware\s+feed|maritime\s+feed|"
+    r"transit\s+feed|cctv\s+feed|infrastructure\s+feed|oi\s+trending|"
+    r"live\s+(?:camera|cctv)\s+feeds?|official\s+public\s+cameras?|"
+    r"public\s+camera\s+feeds?|flights?|private\s+flights?|"
+    r"private\s+jets?|military\s+flights?|maritime\s+layer|"
+    r"satellite\s+layer|cctv\s+cameras?|live\s+previews?|"
+    r"global\s+incidents?|day\s+night\s+layer|submarine\s+cables?|"
+    r"sdk\s+(?:sea|air|naval)|live\s+clouds|wind\s+layer|"
+    r"rain\s+layer|wind\s+controls|rain\s+controls|fires?\s+layer|"
+    r"dashboard\s+layers?|osiris\s+layers?)"
+)
+_OSINT_ACTION = (
+    r"(?:look\s*up|lookup|check|search|find|resolve|run|do|get|"
+    r"show|list|give|display|fetch|tell)"
+)
+_OSINT_FEED_ACTION = (
+    r"(?:show|list|get|fetch|give|display|recent|current|latest|what|which)"
+)
+
 _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
     (category, reason, re.compile(pattern, re.I))
     for category, reason, pattern in (
@@ -126,6 +158,14 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("ui", "open/show panel request", rf"{_PLEASE}(?:open|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b"),
         ("ui", "tool or feature toggle request", r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research|incognito)\b"),
 
+        # Read-only OSINT lookups and feeds. These must win over generic web
+        # search so a request such as "current sanctions search" reaches the
+        # keyless OSIRIS adapter instead of a generic web tool.
+        ("osint", "explicit OSIRIS request", rf"\b{_OSIRIS_TERM}\b.*"),
+        ("osint", "OSIRIS tool listing request", rf"\b(?:list|show|what|which)\b.{{0,80}}\b{_OSIRIS_TERM}\b.{{0,80}}\b(?:tools?|capabilities)\b"),
+        ("osint", "OSINT lookup request", rf"{_PLEASE}{_OSINT_ACTION}\b.{{0,120}}\b{_OSINT_SUBJECT}\b"),
+        ("osint", "OSINT feed request", rf"{_PLEASE}{_OSINT_FEED_ACTION}\b.{{0,120}}\b{_OSINT_SUBJECT}\b"),
+
         # Deep research jobs, not quick conceptual mentions of research.
         ("web", "explicit web search request", rf"{_PLEASE}(?:do|run|use|perform|make)\s+(?:a\s+)?(?:web\s+search|search\s+the\s+web)\b.+"),
         ("web", "generic search request", rf"{_PLEASE}search\s+(?!(?:my\s+)?(?:chats?|history|sessions?|notes?|todos?|emails?|mail|inbox|documents?|docs|gallery|images?|files?)\b).+"),
@@ -164,7 +204,7 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("workspace", "file/code inspection request", rf"{_PLEASE}(?:find|inspect|look\s+at|open|read|check)\b.{{0,120}}\b(?:file|folder|directory|repo|repository|code|source|logs?|trace|stack|diff)\b"),
         ("workspace", "server/process debugging request", rf"{_PLEASE}(?:check|debug|fix|restart|start|stop|kill|tail|inspect)\b.{{0,120}}\b(?:server|service|process|port|docker|container|tmux|endpoint|logs?)\b"),
         ("workspace", "local computer task request", r"\b(?:on|from|in|using|with)\s+(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b|\b(?:local|host)\s+(?:computer|machine|files?|system)\b"),
-        ("workspace", "named computer task request", r"\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b|that\b|it\b|same\b|current\b)(?:[a-z][a-z0-9_.-]{1,31})\b"),
+        ("workspace", "named computer task request", r"\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b|that\b|it\b|same\b|current\b|cameras?\b|webcams?\b|cctv\b)(?:[a-z][a-z0-9_.-]{1,31})\b"),
         ("workspace", "terminal workspace request", rf"\b(?:terminal|shell|workspace|tmux|docker|container|git|branch|commit|diff|pytest|stacktrace|traceback|{_BENCHMARK_COMMAND}|eval(?:uation)?s?)\b"),
 
         # Shell / remote-host intent.

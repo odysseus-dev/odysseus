@@ -310,6 +310,11 @@
     </div>
 
     <button type="submit" id="submitBtn">Sign In</button>
+    <div id="passkeyArea" style="display:none;margin-top:12px;text-align:center;">
+      <div style="font-size:0.75rem;opacity:0.55;margin-bottom:8px;">or</div>
+      <button type="button" id="passkeySignInBtn" style="background:color-mix(in srgb, var(--red) 18%, var(--bg));border:1px solid var(--border);color:var(--fg);font-weight:500;">Sign in with passkey</button>
+      <div id="passkeyHint" style="font-size:0.75rem;opacity:0.6;margin-top:6px;display:none;"></div>
+    </div>
   </form>
 
   <div class="toggle" id="toggleArea" style="display:none">
@@ -348,6 +353,9 @@
   const toggleArea = document.getElementById('toggleArea');
   const toggleLink = document.getElementById('toggleLink');
   const toggleText = document.getElementById('toggleText');
+  const passkeyArea = document.getElementById('passkeyArea');
+  const passkeySignInBtn = document.getElementById('passkeySignInBtn');
+  const passkeyHint = document.getElementById('passkeyHint');
   const spinnerModulePromise = import(appUrl('/static/js/spinner.js'));
   let submitSpinner = null;
   let submitSpinnerToken = 0;
@@ -408,6 +416,7 @@
       submitBtn.textContent = 'Create Admin Account';
       toggleArea.style.display = 'none';
       rememberToggle.style.display = 'none';
+      passkeyArea.style.display = 'none';
     } else if (m === 'signup') {
       setupNote.style.display = 'none';
       confirmGroup.style.display = 'block';
@@ -416,6 +425,7 @@
       toggleText.textContent = 'Already have an account? ';
       toggleLink.textContent = 'Sign in';
       rememberToggle.style.display = 'none';
+      passkeyArea.style.display = 'none';
     } else {
       setupNote.style.display = 'none';
       confirmGroup.style.display = 'none';
@@ -424,6 +434,7 @@
       toggleText.textContent = "Don't have an account? ";
       toggleLink.textContent = 'Sign up';
       rememberToggle.style.display = '';
+      passkeyArea.style.display = 'block';
     }
   }
 
@@ -456,6 +467,109 @@
     setMode(mode === 'login' ? 'signup' : 'login');
   });
 
+  function b64urlToBytes(value) {
+    let b64 = String(value).replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    return Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+  }
+
+  function bytesToB64url(value) {
+    const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function showPasskeyHint(message, isError) {
+    passkeyHint.textContent = message;
+    passkeyHint.style.color = isError ? '#e55' : 'var(--green)';
+    passkeyHint.style.display = 'block';
+  }
+
+  function finishLogin(loginUsername) {
+    const _rem = document.getElementById('remember').checked;
+    if (_rem && loginUsername) localStorage.setItem('odysseus-last-user', loginUsername);
+    else if (!_rem) localStorage.removeItem('odysseus-last-user');
+    sessionStorage.removeItem('ody-session-active');
+    submitBtn.disabled = true;
+    Promise.all([
+      fetch(appUrl('/api/sessions'), { credentials: 'same-origin' }).then(r => r.json()),
+      fetch(appUrl('/api/auth/features'), { credentials: 'same-origin' }).then(r => r.json()),
+      fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' }).then(r => r.json()),
+    ]).then(([sess, feat, sett]) => {
+      sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
+      sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
+      sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
+    }).catch(() => {}).finally(() => { window.location.replace(appUrl('/')); });
+  }
+
+  if (passkeySignInBtn) {
+    passkeySignInBtn.addEventListener('click', async () => {
+      errEl.style.display = 'none';
+      passkeyHint.style.display = 'none';
+      if (!window.PublicKeyCredential || !navigator.credentials) {
+        showPasskeyHint('This browser does not support passkeys.', true);
+        return;
+      }
+      if (!window.isSecureContext) {
+        showPasskeyHint('Passkeys require HTTPS.', true);
+        return;
+      }
+      const typedUser = document.getElementById('username').value.trim();
+      passkeySignInBtn.disabled = true;
+      passkeySignInBtn.textContent = 'Waiting for Windows Hello…';
+      try {
+        const startRes = await fetch(appUrl('/api/auth/passkey/login/start') + (typedUser ? '?username=' + encodeURIComponent(typedUser) : ''), { credentials: 'same-origin' });
+        const startData = await startRes.json();
+        if (!startRes.ok) throw new Error(startData.detail || 'Passkey start failed');
+        const publicKey = {
+          challenge: b64urlToBytes(startData.challenge),
+          rpId: startData.rp_id,
+          timeout: 60000,
+          userVerification: 'required',
+        };
+        if (Array.isArray(startData.allow_credentials) && startData.allow_credentials.length) {
+          publicKey.allowCredentials = startData.allow_credentials.map(item => ({
+            type: 'public-key',
+            id: b64urlToBytes(item.id),
+          }));
+        }
+        const assertion = await navigator.credentials.get({ publicKey });
+        if (!assertion) throw new Error('No passkey was selected');
+        const finishRes = await fetch(appUrl('/api/auth/passkey/login/finish'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            challenge: startData.challenge,
+            credential_id: bytesToB64url(assertion.rawId),
+            client_data_json: bytesToB64url(assertion.response.clientDataJSON),
+            authenticator_data: bytesToB64url(assertion.response.authenticatorData),
+            signature: bytesToB64url(assertion.response.signature),
+            remember: document.getElementById('remember').checked,
+          }),
+        });
+        const finishData = await finishRes.json();
+        if (!finishRes.ok) throw new Error(finishData.detail || 'Passkey login failed');
+        showPasskeyHint('Passkey accepted', false);
+        finishLogin(finishData.username || typedUser);
+      } catch (err) {
+        if (err && err.name === 'NotAllowedError') {
+          showPasskeyHint('Passkey request was cancelled or not allowed.', true);
+        } else if (err && err.name === 'NotFoundError') {
+          showPasskeyHint('No passkey found for this account.', true);
+        } else {
+          showPasskeyHint(err.message || 'Passkey login failed', true);
+        }
+      } finally {
+        passkeySignInBtn.disabled = false;
+        passkeySignInBtn.textContent = 'Sign in with passkey';
+      }
+    });
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     errEl.style.display = 'none';
@@ -482,7 +596,7 @@
         if (!res.ok) throw new Error(data.detail || 'Invalid code');
         if (!data.ok) throw new Error('Login failed');
         form._totpMode = false;
-        finishLogin();
+        finishLogin(username);
       } catch (err) {
         showAuthError(err.message);
         restoreSubmit();
@@ -533,22 +647,6 @@
 
     // Login (auto-login after setup/signup too)
     const remember = document.getElementById('remember').checked;
-    function finishLogin() {
-      const _rem = document.getElementById('remember').checked;
-      if (_rem) localStorage.setItem('odysseus-last-user', username);
-      else localStorage.removeItem('odysseus-last-user');
-      sessionStorage.removeItem('ody-session-active');
-      submitBtn.disabled = true;
-      Promise.all([
-        fetch(appUrl('/api/sessions'), { credentials: 'same-origin' }).then(r => r.json()),
-        fetch(appUrl('/api/auth/features'), { credentials: 'same-origin' }).then(r => r.json()),
-        fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' }).then(r => r.json()),
-      ]).then(([sess, feat, sett]) => {
-        sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
-        sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
-        sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
-      }).catch(() => {}).finally(() => { window.location.replace(appUrl('/')); });
-    }
     async function doLogin(totpCode) {
       const loginBody = { username, password, remember };
       if (totpCode) loginBody.totp_code = totpCode;
@@ -580,7 +678,7 @@
         submitBtn.textContent = 'Verify';
         return;
       }
-      finishLogin();
+      finishLogin(username);
     } catch (err) {
       showAuthError(err.message);
       restoreSubmit();

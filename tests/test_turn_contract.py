@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.tool_index import OSIRIS_TOOL_NAMES
 from src.tool_policy import ToolPolicy, WEB_ACCESS_TOOL_NAMES
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.turn_contract import (
@@ -26,6 +27,40 @@ def _completed_tool_turn(user_text, *tools):
             {"tool": tool, "exit_code": 0, "error": False} for tool in tools
         ]}},
     ]
+
+
+@pytest.mark.parametrize("prompt", [
+    "show recent earthquakes",
+    "use OSIRIS to show recent earthquakes",
+    "current sanctions search",
+    "look up DNS for example.com with OSIRIS",
+    "list OSIRIS tools you have",
+    "check CVE-2021-44228",
+    "show flights on the OSIRIS dashboard",
+    "show the satellite layer",
+    "show cctv cameras in Tokyo",
+    "show the wind layer",
+])
+def test_osint_prompts_request_osiris_family(prompt):
+    assert requested_capabilities(prompt) == frozenset({"osint"})
+
+
+def test_osiris_explanation_stays_out_of_osiris_family():
+    assert requested_capabilities("tell me how OSIRIS works") != frozenset({"osint"})
+
+
+def test_osint_contract_offers_all_osiris_tools():
+    schemas = tuple({"function": {"name": name}} for name in sorted(OSIRIS_TOOL_NAMES))
+    contract = resolve_turn_contract(
+        capabilities={"osint"},
+        schemas=schemas,
+        policy=ToolPolicy(),
+        required_capabilities={"osint"},
+        selected_tools=None,
+        message="show recent earthquakes",
+    )
+    assert contract.offered == frozenset(OSIRIS_TOOL_NAMES)
+    assert not contract.unavailable
 
 
 @pytest.mark.parametrize(("prior", "followup"), [

@@ -32,7 +32,7 @@ def test_tts_disabled_toggle_blocks_synthesis(monkeypatch, tmp_path):
 
 def test_stt_disabled_toggle_blocks_transcription(monkeypatch):
     service = STTService()
-    calls = {"endpoint": 0, "whisper": 0}
+    calls = {"endpoint": 0, "local": 0}
 
     monkeypatch.setattr(service, "_load_settings", lambda: {
         "stt_enabled": False,
@@ -45,13 +45,13 @@ def test_stt_disabled_toggle_blocks_transcription(monkeypatch):
         calls["endpoint"] += 1
         return "transcript"
 
-    def fake_whisper():
-        calls["whisper"] += 1
+    def fake_local(*args, **kwargs):
+        calls["local"] += 1
         return None
 
     monkeypatch.setattr(service, "_transcribe_api", fake_endpoint)
-    monkeypatch.setattr(service, "_get_whisper", fake_whisper)
+    monkeypatch.setattr(service, "_transcribe_local", fake_local)
 
     assert service.available is False
     assert service.transcribe(b"audio") is None
-    assert calls == {"endpoint": 0, "whisper": 0}
+    assert calls == {"endpoint": 0, "local": 0}

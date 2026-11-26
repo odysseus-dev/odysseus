@@ -279,7 +279,7 @@
   <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20260929csssplit">
-  <link rel="modulepreload" href="/static/app.js?v=20260929csssplit">
+  <link rel="modulepreload" href="/static/app.js?v=20261125livelabels2">
 <link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
   <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
   <link rel="modulepreload" href="/static/js/sessions.js">
@@ -1177,6 +1177,21 @@
           <button type="button" class="input-icon-btn" title="Web search" id="web-toggle-btn" data-mode-tool="true" aria-label="Web search" aria-pressed="false">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </button>
+          <!-- Webcam still capture — stages one JPEG through the file handler -->
+          <button type="button" class="input-icon-btn" title="Capture webcam still" id="webcam-capture-btn" aria-label="Capture webcam still">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 7l-7 5 7 5V7z"/>
+              <rect x="1" y="5" width="15" height="14" rx="2"/>
+            </svg>
+          </button>
+          <!-- Live object labels — transient local-only frames, no storage -->
+          <button type="button" class="input-icon-btn" title="Live object labels" id="live-labels-btn" aria-label="Live object labels" aria-pressed="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>
+              <line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
+              <line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/>
             </svg>
           </button>
           <!-- Shell commands (terminal) -->
@@ -2120,6 +2135,15 @@
               </div>
             </div>
           </div>
+          <div class="admin-card" id="settings-passkey-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Passkeys</h2>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:10px;">Use Windows Hello face or PIN to sign in. Face data stays in Windows.</div>
+            <div id="settings-passkey-list" style="margin-bottom:10px;"></div>
+            <div class="settings-row" style="justify-content:flex-end;">
+              <span id="settings-passkey-msg" style="font-size:11px;margin-right:auto;"></span>
+              <button class="admin-btn-add" id="settings-passkey-add">Add passkey</button>
+            </div>
+          </div>
           <div class="admin-card" id="settings-2fa-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>Two-Factor Authentication</h2>
             <div id="settings-2fa-content">
@@ -2674,7 +2698,7 @@
 <script type="module" src="/static/js/skills.js?v=20260909kebabconsistency1"></script>
 <script type="module" src="/static/js/tourHints.js"></script>
 <script type="module" src="/static/js/tourAutoplay.js"></script>
-<script type="module" src="/static/js/fileHandler.js?v=20260909mobileattachmentedit1"></script>
+<script type="module" src="/static/js/fileHandler.js?v=20261125livelabels2"></script>
 <script type="module" src="/static/js/voiceRecorder.js"></script>
 <script type="module" src="/static/js/models.js"></script>  <!-- This must come BEFORE app.js -->
 <script type="module" src="/static/js/rag.js"></script>
@@ -2693,9 +2717,9 @@
 <script type="module" src="/static/js/search-chat.js"></script>
 <script type="module" src="/static/js/theme.js?v=20260911organsrain1"></script>
 <script type="module" src="/static/js/censor.js"></script>
-<script type="module" src="/static/js/settings.js?v=20260912writingstyle3"></script>
+<script type="module" src="/static/js/settings.js?v=20261125passkeys1"></script>
 <script type="module" src="/static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
-<script type="module" src="/static/app.js?v=20260929csssplit"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20261125livelabels2"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260829chatstyle12"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1').catch(()=>{});}</script>

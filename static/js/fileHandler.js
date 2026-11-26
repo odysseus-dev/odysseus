@@ -335,7 +335,12 @@ export async function uploadPending(opts = {}) {
   }
 
   const fd = new FormData();
-  pendingFiles.forEach(f => fd.append('files', f, f.name || 'paste.png'));
+  const webcamIndices = [];
+  pendingFiles.forEach((f, idx) => {
+    fd.append('files', f, f.name || 'paste.png');
+    if (f && f.__odysseusWebcam) webcamIndices.push(idx);
+  });
+  if (webcamIndices.length) fd.append('webcam_capture', '1');
   if (opts.sessionId) fd.append('session_id', opts.sessionId);
   _uploadAbortCtrl = new AbortController();
   _uploading = true;
@@ -364,6 +369,14 @@ export async function uploadPending(opts = {}) {
     }
     const data = await res.json();
     uploaded = (data.files || []);
+    if (webcamIndices.length) {
+      const webcamIds = webcamIndices.map(i => uploaded[i] && uploaded[i].id).filter(Boolean);
+      if (webcamIds.length) {
+        window.dispatchEvent(new CustomEvent('odysseus:webcam-uploaded', {
+          detail: { ids: webcamIds },
+        }));
+      }
+    }
     if (uploaded.some(x => x && x.gallery_id)) {
       try { localStorage.setItem('gallery-fresh-chat-upload', String(Date.now())); } catch (_) {}
       window.dispatchEvent(new CustomEvent('gallery-refresh', { detail: { source: 'chat-upload' } }));

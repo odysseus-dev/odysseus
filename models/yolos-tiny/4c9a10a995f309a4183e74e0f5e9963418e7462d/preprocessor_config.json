@@ -1,0 +1,25 @@
+{
+  "do_normalize": true,
+  "do_pad": true,
+  "do_rescale": true,
+  "do_resize": true,
+  "feature_extractor_type": "YolosFeatureExtractor",
+  "format": "coco_detection",
+  "image_mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "image_processor_type": "YolosFeatureExtractor",
+  "image_std": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "resample": 2,
+  "rescale_factor": 0.00392156862745098,
+  "size": {
+    "longest_edge": 1333,
+    "shortest_edge": 512
+  }
+}

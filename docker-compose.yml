@@ -1,5 +1,12 @@
 services:
   odysseus:
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # Official multi-arch GHCR image (linux/amd64 + linux/arm64), published by
     # the "ci / docker publish" workflow on every push to main and dev.
     # Docker pulls this image when it is reachable, and only falls back to the
@@ -30,6 +37,10 @@ services:
       # Ollama at http://host.docker.internal:11434.
       - "host.docker.internal:host-gateway"
     environment:
+      # Persistent Python libraries for imported document/utility skills
+      # (python-docx, openpyxl, python-pptx, reportlab, pymupdf, pandas, ...).
+      # Installed under ./data/pydeps so container recreates keep them.
+      - PYTHONPATH=/app/data/pydeps
       - LLM_HOST=${LLM_HOST:-localhost}
       - LLM_HOSTS=${LLM_HOSTS:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -108,6 +119,13 @@ services:
     restart: unless-stopped
 
   chromadb:
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: docker.io/chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
     ports:
       - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
@@ -122,6 +140,13 @@ services:
     restart: unless-stopped
 
   searxng:
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # Pinned, not :latest — odysseus waits on searxng's healthcheck
     # (depends_on: condition: service_healthy), so a broken upstream `latest`
     # tag blocks the whole app from starting. 2026.6.2 crashes on boot with
@@ -177,6 +202,13 @@ services:
     restart: unless-stopped
 
   ntfy:
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: docker.io/binwiederhier/ntfy:v2.32.0@sha256:59250e1d8be2ee2186c4560322f625faef22ace380331f05b63f8842dbd62602
     command: serve
     ports:
@@ -185,6 +217,7 @@ services:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+      - NTFY_UPSTREAM_BASE_URL=https://ntfy.sh
     restart: unless-stopped
 
 volumes:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import uuid
 import functools
 import threading
@@ -58,7 +59,7 @@ def store_transaction(path_factory):
     return decorate
 
 
-def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
+def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None, mode: Optional[int] = None) -> None:
     """Atomically persist `data` as JSON at `path`.
 
     The temp file uses a random suffix so two concurrent writers saving the
@@ -75,6 +76,18 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
             json.dump(data, f, indent=indent)
             f.flush()
             os.fsync(f.fileno())
+        if os.path.exists(path):
+            # Preserve owner and mode across the rename. Secret stores are
+            # rewritten from inside the container, but the host backup user
+            # must still be able to read them.
+            old = os.stat(path)
+            try:
+                os.chown(tmp, old.st_uid, old.st_gid)
+            except OSError:
+                pass
+            os.chmod(tmp, mode if mode is not None else stat.S_IMODE(old.st_mode))
+        elif mode is not None:
+            os.chmod(tmp, mode)
         os.replace(tmp, path)
     finally:
         # Directly unlink to avoid a check-then-act race condition.

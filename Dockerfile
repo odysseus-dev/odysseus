@@ -134,6 +134,39 @@ RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
 # keeps the effective Docker selection consistent with system trust.
 RUN python /usr/local/bin/check-ca-trust.py --system --python --grpc
 
+# Isolated Faster Whisper worker. The main application environment does not
+# import this stack; Odysseus starts the venv as a long-lived subprocess and
+# keeps the model warm between local STT requests.
+# The pinned wheels below are for the arm64 image and were verified by SHA-256.
+RUN test "$(dpkg --print-architecture)" = arm64 \
+    || (echo "Faster Whisper worker wheels are pinned for arm64 only" && exit 1)
+COPY docker/faster-whisper-requirements.txt /tmp/faster-whisper-requirements.txt
+COPY docker/faster-whisper-src/ /tmp/faster-whisper-src/
+RUN python3 -m venv /opt/faster-whisper/venv \
+    && /opt/faster-whisper/venv/bin/pip install --no-cache-dir --only-binary=:all: \
+       --require-hashes -r /tmp/faster-whisper-requirements.txt \
+    && /opt/faster-whisper/venv/bin/pip install --no-cache-dir --no-deps /tmp/faster-whisper-src \
+    && mkdir -p /opt/faster-whisper/tiny \
+    && for f in config.json model.bin tokenizer.json vocabulary.txt; do \
+         curl -fsSL "https://huggingface.co/SYSTRAN/faster-whisper-tiny/resolve/d90ca5fe260221311c53c58e660288d3deb8d356/${f}" \
+           -o "/opt/faster-whisper/tiny/${f}"; \
+       done \
+    && printf '%s  %s\n' \
+         "a73a28cdfe1c43ccc7202fa333d1f89c202477271407ae9a7f19afa52039cac8" "/opt/faster-whisper/tiny/config.json" \
+         "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1" "/opt/faster-whisper/tiny/model.bin" \
+         "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab" "/opt/faster-whisper/tiny/tokenizer.json" \
+         "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913" "/opt/faster-whisper/tiny/vocabulary.txt" \
+       | sha256sum -c - \
+    && test "$(stat -c %s /opt/faster-whisper/tiny/config.json)" = "2249" \
+    && test "$(stat -c %s /opt/faster-whisper/tiny/model.bin)" = "75538270" \
+    && test "$(stat -c %s /opt/faster-whisper/tiny/tokenizer.json)" = "2203239" \
+    && test "$(stat -c %s /opt/faster-whisper/tiny/vocabulary.txt)" = "459861" \
+    && rm -rf /tmp/faster-whisper-src /tmp/faster-whisper-requirements.txt
+ENV ODYSSEUS_FW_PYTHON=/opt/faster-whisper/venv/bin/python \
+    ODYSSEUS_FW_WORKER=/app/services/stt/faster_whisper_worker.py \
+    ODYSSEUS_FW_MODEL=/opt/faster-whisper/tiny \
+    ODYSSEUS_FW_CPU_THREADS=4
+
 # Copy app code
 COPY . .
 # Require the redistribution notices in the image build context.

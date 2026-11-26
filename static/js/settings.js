@@ -1755,6 +1755,131 @@ function initAccount() {
     });
   }
 
+  // ── Passkeys (WebAuthn / Windows Hello) ──
+  const passkeyList = el('settings-passkey-list');
+  const passkeyMsg = el('settings-passkey-msg');
+  const passkeyAddBtn = el('settings-passkey-add');
+
+  function pkBytesToB64url(value) {
+    const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function pkB64urlToBytes(value) {
+    let b64 = String(value).replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    return Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+  }
+
+  function setPasskeyMsg(text, ok) {
+    if (!passkeyMsg) return;
+    passkeyMsg.textContent = text || '';
+    passkeyMsg.style.color = ok ? 'var(--green)' : 'var(--red)';
+  }
+
+  async function renderPasskeys() {
+    if (!passkeyList) return;
+    try {
+      const res = await fetch('/api/auth/passkeys', { credentials: 'same-origin' });
+      const data = await res.json();
+      const rows = data.passkeys || [];
+      if (!rows.length) {
+        passkeyList.innerHTML = '<div style="font-size:11px;opacity:0.55;">No passkeys yet.</div>';
+        return;
+      }
+      passkeyList.innerHTML = rows.map(item => `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+          <span style="flex:1;font-size:12px;">${item.label || 'Passkey'}<br><span style="font-size:10px;opacity:0.5;">${item.credential_id.slice(0, 18)}…</span></span>
+          <button type="button" class="pk-delete" data-id="${item.credential_id}" style="background:transparent;border:1px solid var(--color-error);color:var(--color-error);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">Remove</button>
+        </div>`).join('');
+      passkeyList.querySelectorAll('.pk-delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          setPasskeyMsg('', true);
+          btn.disabled = true;
+          try {
+            const res = await fetch('/api/auth/passkeys/' + encodeURIComponent(btn.dataset.id), {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed'); }
+            setPasskeyMsg('Passkey removed', true);
+            await renderPasskeys();
+          } catch (e) {
+            setPasskeyMsg(e.message, false);
+            btn.disabled = false;
+          }
+        });
+      });
+    } catch (e) {
+      passkeyList.innerHTML = '';
+      setPasskeyMsg(e.message || 'Could not load passkeys', false);
+    }
+  }
+
+  if (passkeyAddBtn) {
+    passkeyAddBtn.addEventListener('click', async () => {
+      setPasskeyMsg('', true);
+      if (!window.PublicKeyCredential || !navigator.credentials) {
+        setPasskeyMsg('This browser does not support passkeys.', false);
+        return;
+      }
+      if (!window.isSecureContext) {
+        setPasskeyMsg('Passkeys require HTTPS.', false);
+        return;
+      }
+      passkeyAddBtn.disabled = true;
+      try {
+        const startRes = await fetch('/api/auth/passkey/register/start', { credentials: 'same-origin' });
+        const startData = await startRes.json();
+        if (!startRes.ok) throw new Error(startData.detail || 'Start failed');
+        const credential = await navigator.credentials.create({
+          publicKey: {
+            challenge: pkB64urlToBytes(startData.challenge),
+            rp: { name: startData.rp_name || 'Odysseus AI', id: startData.rp_id },
+            user: {
+              id: pkB64urlToBytes(startData.user_id),
+              name: startData.username,
+              displayName: startData.username,
+            },
+            pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+            authenticatorSelection: {
+              authenticatorAttachment: 'platform',
+              residentKey: 'preferred',
+              userVerification: 'required',
+            },
+            timeout: 60000,
+            attestation: 'none',
+          },
+        });
+        if (!credential) throw new Error('No passkey was created');
+        const finishRes = await fetch('/api/auth/passkey/register/finish', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challenge: startData.challenge,
+            credential_id: pkBytesToB64url(credential.rawId),
+            client_data_json: pkBytesToB64url(credential.response.clientDataJSON),
+            attestation_object: pkBytesToB64url(credential.response.attestationObject),
+          }),
+        });
+        const finishData = await finishRes.json();
+        if (!finishRes.ok) throw new Error(finishData.detail || 'Registration failed');
+        setPasskeyMsg('Passkey added', true);
+        await renderPasskeys();
+      } catch (e) {
+        if (e && e.name === 'NotAllowedError') setPasskeyMsg('Passkey request was cancelled.', false);
+        else setPasskeyMsg(e.message || 'Could not add passkey', false);
+      } finally {
+        passkeyAddBtn.disabled = false;
+      }
+    });
+  }
+
+  renderPasskeys();
+
   // ── Two-Factor Authentication ──
   const tfaContent = el('settings-2fa-content');
   if (tfaContent) {

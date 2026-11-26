@@ -1,0 +1,12 @@
+Faster Whisper source vendored for the isolated Odysseus worker.
+
+Source: https://github.com/AIXerum/faster-whisper.git
+Commit: ecdf5a14798a8a9525d465bc851af5cacf8c508f
+Version: 0.10.0
+License: MIT (see LICENSE)
+Verified archive: faster-whisper-AIXerum-20261126.tar.gz
+Archive size: 2903588 bytes
+Archive SHA-256: b642436ff219cd818a0102f9119bf2be725a154882327da6f04586178687c927
+
+Only runtime source files are vendored here. Git metadata, tests, and local build
+artifacts were removed. No credentials or accounts are used.

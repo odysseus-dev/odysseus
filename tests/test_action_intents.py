@@ -148,6 +148,75 @@ def test_explanatory_calendar_questions_stay_plain_chat():
     assert intent.reason == "explanatory feature question"
 
 
+def test_osint_requests_promote_to_osiris_agent():
+    prompts = [
+        "show recent earthquakes",
+        "use OSIRIS to show recent earthquakes",
+        "current sanctions search",
+        "look up DNS for example.com with OSIRIS",
+        "list OSIRIS tools you have",
+        "check CVE-2021-44228",
+    ]
+    for prompt in prompts:
+        intent = classify_tool_intent(prompt)
+        assert intent.needs_tools
+        assert intent.category == "osint"
+
+
+def test_osint_explanations_stay_plain_chat():
+    assert not message_needs_tools("tell me how OSIRIS works")
+    assert not message_needs_tools("how do I use OSIRIS tools?")
+
+
+def test_public_camera_feed_requests_route_to_osiris_agent():
+    prompts = [
+        "find live camera feeds in Seoul, ROK from official public cameras",
+        "show public camera feeds on OSIRIS",
+        "show live CCTV feeds in Seoul",
+    ]
+    for prompt in prompts:
+        intent = classify_tool_intent(prompt)
+        assert intent.needs_tools
+        assert intent.category == "osint"
+
+
+def test_dashboard_layer_requests_route_to_osiris_agent():
+    prompts = [
+        "show flights on the OSIRIS dashboard",
+        "show private jets on OSIRIS",
+        "what military flights are in the area",
+        "show the satellite layer",
+        "show cctv cameras in Tokyo",
+        "show global incidents",
+        "show the submarine cables layer",
+        "show the wind layer",
+        "show rain controls",
+    ]
+    for prompt in prompts:
+        intent = classify_tool_intent(prompt)
+        assert intent.needs_tools, prompt
+        assert intent.category == "osint", prompt
+
+
+def test_generic_weather_requests_do_not_route_to_osiris():
+    prompts = [
+        "is it raining in London",
+        "show the current wind forecast",
+        "what is the weather today",
+    ]
+    for prompt in prompts:
+        intent = classify_tool_intent(prompt)
+        assert intent.category != "osint", prompt
+
+
+def test_from_cameras_is_not_a_named_workspace_target():
+    intent = classify_tool_intent("find live camera feeds in Seoul from cameras")
+    assert intent.category != "workspace"
+
+    intent = classify_tool_intent("check the service on odysseus")
+    assert intent.needs_tools and intent.category == "workspace"
+
+
 def test_router_reports_non_calendar_categories():
     assert classify_tool_intent("reply to that email").category == "email"
     assert classify_tool_intent("open my calendar").category == "ui"

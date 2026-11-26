@@ -174,6 +174,19 @@ class EncryptedText(TypeDecorator):
         return decrypt(value)
 
 
+class PasskeyCredential(TimestampMixin, Base):
+    """A WebAuthn passkey. Only public key material is stored."""
+
+    __tablename__ = "passkey_credentials"
+
+    credential_id = Column(String, primary_key=True)
+    owner = Column(String, nullable=False, index=True)
+    public_key = Column(Text, nullable=False)
+    sign_count = Column(Integer, default=0, nullable=False)
+    label = Column(String, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+
+
 class Session(TimestampMixin, Base):
     """
     SQLAlchemy model for Session table.

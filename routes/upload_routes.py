@@ -6,7 +6,7 @@ import asyncio
 import shutil
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, Request, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, Request, File, UploadFile, HTTPException, Form, Body
 from typing import List, Optional
 import logging
 from core.middleware import require_admin
@@ -24,12 +24,13 @@ from core.database import (
 from src.auth_helpers import effective_user, is_delegated_credential
 from src.owner_identity import auth_disabled, is_request_sentinel_owner
 from src.attachment_refs import attachment_refs_from_metadata
-from src.constants import GENERATED_IMAGES_DIR
+from src.constants import GENERATED_IMAGES_DIR, PERSONAL_UPLOADS_DIR
 from src.path_confinement import is_inside
 from src.upload_handler import (
     UploadCleanupSafetyError,
     count_recent_uploads,
     extract_upload_ids,
+    secure_filename,
 )
 
 logger = logging.getLogger(__name__)
@@ -237,6 +238,51 @@ def setup_upload_routes(upload_handler):
             return None
         return session_id
 
+    def _form_flag(value: object) -> bool:
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _write_webcam_flags(updates: dict, removals: set) -> int:
+        """Atomically mark or remove webcam upload rows in uploads.json."""
+        if not updates and not removals:
+            return 0
+        index_path = os.path.join(upload_handler.upload_dir, "uploads.json")
+        with upload_handler._index_lock:
+            current = dict(upload_handler._load_upload_index(fail_on_error=True))
+            changed = 0
+            for key, info in list(current.items()):
+                upload_id = str(info.get("id") or "") if isinstance(info, dict) else ""
+                if upload_id in removals:
+                    current.pop(key, None)
+                    changed += 1
+                elif upload_id in updates and isinstance(info, dict):
+                    updated = dict(info)
+                    updated.update(updates[upload_id])
+                    current[key] = updated
+                    changed += 1
+            if changed:
+                upload_handler._atomic_write_json(index_path, current, sync_backup=True)
+            return changed
+
+    def _webcam_secure_dir(owner: str | None) -> str:
+        personal_root = os.path.realpath(PERSONAL_UPLOADS_DIR)
+        owner_segment = secure_filename((owner or "local").strip())[:80] or "local"
+        secure_dir = os.path.realpath(os.path.join(personal_root, owner_segment, "webcam"))
+        if not is_inside(personal_root, secure_dir):
+            raise HTTPException(403, "Access denied")
+        os.makedirs(secure_dir, mode=0o700, exist_ok=True)
+        os.chmod(secure_dir, 0o700)
+        return secure_dir
+
+    def _webcam_secure_path(owner: str | None, file_id: str) -> str:
+        safe_id = secure_filename(file_id)
+        if not upload_handler.validate_upload_id(safe_id):
+            raise HTTPException(400, "Invalid upload id")
+        secure_dir = _webcam_secure_dir(owner)
+        path = os.path.realpath(os.path.join(secure_dir, safe_id))
+        if not is_inside(secure_dir, path):
+            raise HTTPException(403, "Access denied")
+        return path
+
     def _promote_chat_image_to_gallery(meta: dict, owner: str | None, session_id: str | None = None,
                                        gallery_id: str | None = None) -> str | None:
         """Make chat-uploaded images visible in Gallery without changing chat storage."""
@@ -323,6 +369,7 @@ def setup_upload_routes(upload_handler):
         files: List[UploadFile] = File(...),
         session_id: Optional[str] = Form(None),
         gallery_id: Optional[str] = Form(None),
+        webcam_capture: Optional[str] = Form(None),
     ):
         """Upload files with enhanced security and organization."""
         if not isinstance(session_id, str):
@@ -349,8 +396,10 @@ def setup_upload_routes(upload_handler):
                 if not token_scopes.intersection(UPLOAD_WRITE_SCOPES):
                     raise HTTPException(403, f"API token missing required scope: {' or '.join(sorted(UPLOAD_WRITE_SCOPES))}")
             
+        skip_gallery = _form_flag(webcam_capture)
         client_ip = request.client.host if request.client else "unknown"
         out = []
+        webcam_updates: dict = {}
 
         # Limit concurrent uploads per IP. Count genuine recent upload events —
         # NOT the number of files in this batch. The previous check summed over
@@ -374,7 +423,14 @@ def setup_upload_routes(upload_handler):
                 if is_request_sentinel_owner(owner):
                     owner = None
                 meta = upload_handler.save_upload(u, client_ip, owner=owner)
-                promoted_gallery_id = _promote_chat_image_to_gallery(meta, owner, session_id, gallery_id)
+                if skip_gallery:
+                    promoted_gallery_id = None
+                    webcam_updates[meta["id"]] = {
+                        "webcam_capture": True,
+                        "gallery_promotion_skipped": True,
+                    }
+                else:
+                    promoted_gallery_id = _promote_chat_image_to_gallery(meta, owner, session_id, gallery_id)
                 item = {
                     "id": meta["id"],
                     "name": meta["name"],
@@ -397,11 +453,155 @@ def setup_upload_routes(upload_handler):
                 logger.error(f"Failed to process upload {u.filename}: {str(e)}")
                 continue
         
+        _write_webcam_flags(webcam_updates, set())
+
         if not out:
             raise HTTPException(500, "All file uploads failed")
             
         return {"files": out}
     
+    @router.post("/webcam/keep")
+    async def keep_webcam_uploads(request: Request, data: dict = Body(...)):
+        """Copy webcam chat uploads into an owner-only private store."""
+        raw_ids = data.get("ids") if isinstance(data, dict) else None
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise HTTPException(400, "No upload ids supplied")
+
+        kept: list[str] = []
+        updates: dict = {}
+        for file_id in raw_ids:
+            if not isinstance(file_id, str) or not upload_handler.validate_upload_id(file_id):
+                continue
+            info = upload_handler.get_upload_info(file_id)
+            if not info:
+                continue
+            _verify_upload_access(request, info.get("owner"), write=True)
+            source = info.get("path")
+            if not source or not _path_inside_upload_dir(source) or not os.path.isfile(source):
+                continue
+
+            target = _webcam_secure_path(info.get("owner"), file_id)
+            shutil.copy2(source, target)
+            os.chmod(target, 0o600)
+            updates[file_id] = {
+                "webcam_capture": True,
+                "webcam_kept": True,
+                "secure_path": target,
+            }
+            kept.append(file_id)
+
+        _write_webcam_flags(updates, set())
+        return {"kept": kept}
+
+    @router.delete("/webcam")
+    async def delete_webcam_uploads(request: Request, data: dict = Body(...)):
+        """Delete webcam chat uploads, private copies, thumbnails, and vision cache."""
+        raw_ids = data.get("ids") if isinstance(data, dict) else None
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise HTTPException(400, "No upload ids supplied")
+
+        deleted: list[str] = []
+        removals: set[str] = set()
+        for file_id in raw_ids:
+            if not isinstance(file_id, str) or not upload_handler.validate_upload_id(file_id):
+                continue
+            info = upload_handler.get_upload_info(file_id)
+            if not info:
+                continue
+            _verify_upload_access(request, info.get("owner"), write=True)
+            if not _form_flag(info.get("webcam_capture")):
+                continue
+
+            secure_dir = None
+            if _form_flag(info.get("webcam_kept")):
+                try:
+                    secure_dir = _webcam_secure_dir(info.get("owner"))
+                except HTTPException:
+                    secure_dir = None
+
+            targets = [
+                info.get("path"),
+                os.path.join(upload_handler.upload_dir, ".thumbs", file_id + ".jpg"),
+                os.path.join(upload_handler.upload_dir, ".vision", file_id + ".txt"),
+            ]
+            if secure_dir:
+                targets.append(os.path.join(secure_dir, secure_filename(file_id)))
+
+            for raw_path in targets:
+                if not raw_path:
+                    continue
+                path = os.path.realpath(raw_path)
+                inside_upload = _path_inside_upload_dir(path)
+                inside_secure = bool(secure_dir and is_inside(secure_dir, path))
+                if not inside_upload and not inside_secure:
+                    continue
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    os.unlink(path)
+                except OSError:
+                    logger.warning("Could not remove webcam artifact: %s", path)
+
+            removals.add(file_id)
+            deleted.append(file_id)
+
+        _write_webcam_flags({}, removals)
+        return {"deleted": deleted}
+
+    @router.post("/webcam/live-label")
+    async def webcam_live_label(request: Request):
+        """Label one transient webcam frame with pinned local Moondream only.
+
+        The frame stays in memory. It is never written to the upload index,
+        gallery, chat, vision cache, or private webcam store.
+        """
+        if not auth_disabled():
+            app = getattr(request, "app", None)
+            auth_mgr = getattr(getattr(app, "state", None), "auth_manager", None)
+            if auth_mgr is None:
+                raise HTTPException(503, "Authentication service unavailable")
+            if not getattr(auth_mgr, "is_configured", False):
+                raise HTTPException(401, "Setup required")
+            current_user = effective_user(request)
+            if not current_user or is_request_sentinel_owner(current_user):
+                raise HTTPException(403, "Access denied")
+            if is_delegated_credential(request):
+                token_owner = getattr(request.state, "api_token_owner", None)
+                if not token_owner or is_request_sentinel_owner(token_owner):
+                    raise HTTPException(403, "API token has no valid owner")
+                token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+                if not token_scopes.intersection(UPLOAD_WRITE_SCOPES):
+                    raise HTTPException(
+                        403,
+                        f"API token missing required scope: {' or '.join(sorted(UPLOAD_WRITE_SCOPES))}",
+                    )
+
+        content_type = (request.headers.get("content-type") or "").lower()
+        if not content_type.startswith("image/jpeg"):
+            raise HTTPException(415, "Live label frames must be JPEG")
+
+        max_frame_bytes = 512_000
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > max_frame_bytes:
+            raise HTTPException(413, "Live label frame is too large")
+        frame = await request.body()
+        if len(frame) > max_frame_bytes:
+            raise HTTPException(413, "Live label frame is too large")
+        if not frame.startswith(b"\xff\xd8\xff"):
+            raise HTTPException(400, "Invalid JPEG frame")
+
+        owner = effective_user(request)
+        if is_request_sentinel_owner(owner):
+            owner = None
+
+        from src.live_vision import label_jpeg_frame
+
+        try:
+            return await label_jpeg_frame(frame, owner=owner)
+        except Exception as exc:
+            logger.warning("Live webcam label failed: %s", exc)
+            raise HTTPException(502, "Local vision model unavailable") from exc
+
     @router.post("/cleanup")
     async def manual_cleanup(request: Request):
         """Manually trigger cleanup of old uploads."""

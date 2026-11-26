@@ -11,6 +11,7 @@ import tempfile
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from core.atomic_io import atomic_write_json, atomic_write_text
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL
@@ -18,6 +19,7 @@ from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, S
 from src.auth_helpers import _auth_disabled
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
+from src import webauthn_local as webauthn
 from src.settings import (
     load_settings as _load_settings,
     save_settings as _save_settings,
@@ -89,6 +91,23 @@ class ResetUserPasswordRequest(BaseModel):
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
+
+class PasskeyRegisterRequest(BaseModel):
+    challenge: str
+    credential_id: str
+    client_data_json: str
+    attestation_object: str
+    label: Optional[str] = None
+
+
+class PasskeyLoginRequest(BaseModel):
+    challenge: str
+    credential_id: str
+    client_data_json: str
+    authenticator_data: str
+    signature: str
+    remember: bool = True
+
 SESSION_COOKIE = "odysseus_session"
 
 
@@ -117,6 +136,50 @@ def _secure_cookie(request: Request) -> bool:
     # A chained proxy sends a list — the client-facing hop comes first.
     forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0]
     return request.url.scheme == "https" or forwarded_proto.strip().lower() == "https"
+
+
+def _normalize_origin(origin: str) -> str:
+    parsed = urlparse(origin)
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname
+    if not scheme or not host:
+        raise ValueError("Invalid origin")
+    port = parsed.port
+    if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+        return f"{scheme}://{host}:{port}"
+    return f"{scheme}://{host}"
+
+
+def _webauthn_context(request: Request):
+    """Return the browser origin and RP ID for a WebAuthn call."""
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+    scheme = forwarded_proto or request.url.scheme
+    host = forwarded_host or request.headers.get("host", "")
+    if scheme not in ("https", "http") or not host:
+        raise HTTPException(400, "Invalid WebAuthn origin")
+    host_only = host.split(":", 1)[0].lower()
+    if scheme == "http" and host_only not in ("localhost", "127.0.0.1", "::1"):
+        raise HTTPException(400, "Passkeys require HTTPS")
+    try:
+        origin = _normalize_origin(f"{scheme}://{host}")
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid WebAuthn origin") from exc
+    return origin, host_only
+
+
+def _set_session_cookie(request: Request, response: Response, token: str, remember: bool) -> None:
+    cookie_kwargs = dict(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=_secure_cookie(request),
+        path="/",
+    )
+    if remember:
+        cookie_kwargs["max_age"] = TOKEN_TTL
+    response.set_cookie(**cookie_kwargs)
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
@@ -202,17 +265,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
         if not token:
             raise HTTPException(401, "Invalid credentials")
-        cookie_kwargs = dict(
-            key=SESSION_COOKIE,
-            value=token,
-            httponly=True,
-            samesite="lax",
-            secure=_secure_cookie(request),
-            path="/",
-        )
-        if body.remember:
-            cookie_kwargs["max_age"] = TOKEN_TTL
-        response.set_cookie(**cookie_kwargs)
+        _set_session_cookie(request, response, token, body.remember)
         return {"ok": True, "username": username}
 
     @router.post("/logout")
@@ -221,6 +274,117 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if token:
             auth_manager.revoke_token(token)
         response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"ok": True}
+
+    # ---- WebAuthn passkeys (local only) ----
+
+    _passkey_limiter = RateLimiter(max_requests=30, window_seconds=60)
+
+    @router.get("/passkey/register/start")
+    async def passkey_register_start(request: Request):
+        user = _get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Not authenticated")
+        origin, rp_id = _webauthn_context(request)
+        return {
+            "challenge": webauthn.issue_challenge("register", user),
+            "rp_id": rp_id,
+            "rp_name": "Odysseus AI",
+            "user_id": webauthn.user_id_for(user),
+            "username": user,
+            "origin": origin,
+        }
+
+    @router.post("/passkey/register/finish")
+    async def passkey_register_finish(body: PasskeyRegisterRequest, request: Request):
+        user = _get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Not authenticated")
+        origin, rp_id = _webauthn_context(request)
+        bound_user = webauthn.consume_challenge(body.challenge, "register")
+        if bound_user != user:
+            raise HTTPException(400, "Invalid or expired passkey challenge")
+        try:
+            credential_id, public_key = webauthn.verify_registration(
+                expected_origin=origin,
+                rp_id=rp_id,
+                challenge=body.challenge,
+                credential_id_b64=body.credential_id,
+                client_data_b64=body.client_data_json,
+                attestation_object_b64=body.attestation_object,
+            )
+        except webauthn.WebAuthnError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        stored = await asyncio.to_thread(
+            webauthn.store_credential, user, credential_id, public_key, body.label
+        )
+        if not stored:
+            raise HTTPException(409, "This passkey is already registered")
+        return {"ok": True, "credential_id": credential_id}
+
+    @router.get("/passkey/login/start")
+    async def passkey_login_start(request: Request, username: Optional[str] = None):
+        if not _passkey_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests — try again later")
+        origin, rp_id = _webauthn_context(request)
+        normalized = username.strip().lower() if username else None
+        allow = []
+        if normalized:
+            allow = [
+                {"type": "public-key", "id": item["credential_id"]}
+                for item in webauthn.list_credentials(normalized)
+            ]
+        return {
+            "challenge": webauthn.issue_challenge("login", normalized),
+            "rp_id": rp_id,
+            "origin": origin,
+            "allow_credentials": allow,
+        }
+
+    @router.post("/passkey/login/finish")
+    async def passkey_login_finish(body: PasskeyLoginRequest, request: Request, response: Response):
+        if not _passkey_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests — try again later")
+        origin, rp_id = _webauthn_context(request)
+        bound_user = webauthn.consume_challenge(body.challenge, "login")
+        if bound_user is None:
+            raise HTTPException(400, "Invalid or expired passkey challenge")
+        try:
+            owner, sign_count = webauthn.verify_assertion(
+                expected_origin=origin,
+                rp_id=rp_id,
+                challenge=body.challenge,
+                credential_id_b64=body.credential_id,
+                client_data_b64=body.client_data_json,
+                authenticator_data_b64=body.authenticator_data,
+                signature_b64=body.signature,
+            )
+        except webauthn.WebAuthnError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if bound_user and owner != bound_user:
+            raise HTTPException(400, "Passkey does not match this account")
+        token = await asyncio.to_thread(auth_manager.create_session_trusted, owner)
+        if not token:
+            raise HTTPException(401, "Login failed")
+        await asyncio.to_thread(webauthn.touch_credential, body.credential_id, sign_count)
+        _set_session_cookie(request, response, token, body.remember)
+        return {"ok": True, "username": owner}
+
+    @router.get("/passkeys")
+    async def passkey_list(request: Request):
+        user = _get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Not authenticated")
+        return {"passkeys": webauthn.list_credentials(user)}
+
+    @router.delete("/passkeys/{credential_id}")
+    async def passkey_delete(credential_id: str, request: Request):
+        user = _get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Not authenticated")
+        removed = await asyncio.to_thread(webauthn.delete_credential, user, credential_id)
+        if not removed:
+            raise HTTPException(404, "Passkey not found")
         return {"ok": True}
 
     @router.get("/status")
@@ -716,6 +880,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise
         if not ok:
             raise HTTPException(400, "Cannot delete user")
+        webauthn.delete_credentials_for_owner(body.username)
         # delete_user removes the user's ApiToken rows, but the bearer-auth
         # middleware serves from an in-memory prefix->token cache that only
         # rebuilds when flagged dirty. Without this, a deleted user's already

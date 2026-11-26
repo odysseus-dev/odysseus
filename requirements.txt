@@ -14,6 +14,8 @@ pypdfium2
 # Pillow 13 fixes known image-processing advisories; keep local embeddings compatible.
 Pillow>=13.0.0
 faster-whisper
+# PyAV 19 removed metadata_errors, which faster-whisper 1.2.1 still passes.
+av==18.1.0
 pdfplumber
 beautifulsoup4
 charset-normalizer
@@ -27,6 +29,8 @@ chromadb-client
 # gRPC vendors independent roots; 1.84.1 removes the incident trust anchors.
 grpcio>=1.84.1
 fastembed>=0.9.1
+# Pinned ONNX Runtime for the local-only live webcam label detector.
+onnxruntime==1.32.0
 youtube-transcript-api
 yt-dlp
 # Markdown rendering for research reports (src/visual_report.py).

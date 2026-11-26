@@ -268,6 +268,8 @@ if AUTH_ENABLED:
         "/api/auth/setup",
         "/api/auth/signup",
         "/api/auth/login",
+        "/api/auth/passkey/login/start",
+        "/api/auth/passkey/login/finish",
         "/api/auth/logout",
         "/api/auth/status",
         "/api/auth/features",
@@ -801,6 +803,7 @@ app.include_router(setup_tts_routes(tts_service))
 # STT
 from services.stt import get_stt_service
 stt_service = get_stt_service()
+stt_service.warm_up()
 from routes.stt_routes import setup_stt_routes
 app.include_router(setup_stt_routes(stt_service))
 logger.info("STT service initialized (provider managed via settings)")

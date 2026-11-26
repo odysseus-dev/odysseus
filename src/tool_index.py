@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 # Keep this to the small set of tools that agents should be able to reach on
 # any turn. Specialist tools (documents, email, cookbook/model serving,
 # settings, etc.) are still injected by retrieval or keyword intent.
+OSIRIS_TOOL_NAMES = frozenset({
+    "mcp__osiris01__osiris_lookup",
+    "mcp__osiris01__osiris_feed",
+    "mcp__osiris01__osiris_dashboard_layer",
+})
+
 ALWAYS_AVAILABLE = frozenset({
     # Core execution, inspection, and external lookup capabilities. These are
     # available to every model; the runtime tool policy still governs whether
@@ -490,6 +496,33 @@ class ToolIndex:
                    "on the internet", "google", "latest", "current", "news",
                    "weather", "forecast", "stock price", "price of"}):
             {"web_search", "web_fetch", "get_weather"},
+        # OSIRIS read-only OSINT intent. Explicit feed and lookup terms must
+        # survive a retrieval miss, since the adapter is the only tool that can
+        # answer these requests without a web search.
+        frozenset({
+            "osiris", "osint", "open source intelligence", "open-source intelligence",
+            "dns", "dns lookup", "dns records", "whois", "subdomain", "subdomains",
+            "certificate transparency", "cert transparency", "ip lookup",
+            "ip reputation", "shodan", "internetdb", "portscan", "port scan",
+            "bgp", "mac lookup", "phone lookup", "github user", "breach",
+            "breaches", "leak", "leaks", "hudson rock", "hudsonrock",
+            "cve", "cves", "sanction", "sanctions", "ofac", "sanctioned",
+            "threat intelligence", "threat reputation", "threat feed",
+            "earthquake", "earthquakes", "seismic", "conflict", "conflicts",
+            "frontlines", "gdelt", "country risk", "region dossier",
+            "space weather", "satellite feed", "satellites", "news feed",
+            "live news", "market feed", "crypto feed", "cyber threat",
+            "cyber threats", "cyber attack", "cyber attacks", "malware feed",
+            "maritime feed", "transit feed", "cctv feed", "infrastructure feed",
+            "oi trending", "osiris layers", "dashboard layer", "dashboard layers",
+            "flight layer", "flights layer", "private flights", "private jets",
+            "military flights", "maritime layer", "satellite layer",
+            "cctv cameras", "live previews", "live camera feeds",
+            "global incidents", "day night layer", "submarine cables",
+            "sdk sea", "sdk air", "sdk naval", "live clouds", "wind layer",
+            "rain layer", "wind controls", "rain controls", "fires layer",
+        }):
+            OSIRIS_TOOL_NAMES,
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
                    "report on", "do research", "look up everything"}):

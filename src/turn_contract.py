@@ -16,6 +16,7 @@ from types import MappingProxyType
 from typing import Iterable, Mapping
 
 from src.action_intents import classify_tool_intent
+from src.tool_index import OSIRIS_TOOL_NAMES
 from src.tool_policy import ToolPolicy
 from src.text_scanning import has_prefixed_token_match
 
@@ -29,6 +30,7 @@ FAMILY_TOOLS = {
     "documents": frozenset({"manage_documents", "create_document", "edit_document", "update_document", "suggest_document"}),
     "email": frozenset({"list_email_accounts", "list_emails", "search_emails", "read_email", "download_attachment", "scan_email_unsubscribes", "scan_spam", "unsubscribe_email", "send_email", "reply_to_email", "draft_email", "draft_email_reply", "ai_draft_email_reply", "bulk_email", "block_sender", "manage_email_state", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"}),
     "search_browser": frozenset({"web_search", "web_fetch", "get_weather", "private_browser", "youtube_tool", "search_hf_models", "pdf_extract"}),
+    "osint": frozenset(OSIRIS_TOOL_NAMES),
     "shell_files": frozenset({"bash", "python", "host_shell", "read_file", "write_file", "edit_file", "apply_patch", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs", "inspect_media", "extract_text", "transcribe_media"}),
     "cookbook_admin": frozenset({"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "list_cached_models", "list_cookbook_servers", "adopt_served_model", "list_models", "manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "api_call", "app_api", "list_sessions", "manage_session", "create_session", "send_to_session", "chat_with_model", "ask_teacher"}),
     "ui": frozenset({"ui_control"}),
@@ -4284,6 +4286,8 @@ def _clause_capabilities(text: str) -> set[str]:
     personal_lookup = bool(_LOOKUP.search(text) or _PERSONAL_STORE_LOOKUP.search(text))
     if intent.reason == "explanatory feature question" and not personal_lookup:
         return set()
+    if intent.category == "osint":
+        return {"osint"}
     operation = required_read_operation_for_request(text)
     if operation is not None:
         return set(_families_for_tool(operation.tool))
@@ -4752,6 +4756,9 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     text = _normalize_request_lead(message)
     if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
         text = lead["request"].strip()
+    intent = classify_tool_intent(text)
+    if intent.category == "osint":
+        return frozenset({"osint"})
     history = tuple(history)
     if corrected_browser_target(raw_text, history):
         return frozenset({'search_browser'})

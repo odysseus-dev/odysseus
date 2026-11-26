@@ -207,6 +207,7 @@ services:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+      - NTFY_UPSTREAM_BASE_URL=https://ntfy.sh
     restart: unless-stopped
 
 volumes:

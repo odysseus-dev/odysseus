@@ -154,7 +154,9 @@ class AuthManager:
         try:
             with self._sessions_lock:
                 snapshot = dict(self._sessions)
-            _atomic_write_json(self._sessions_path, snapshot)
+            # Live session tokens must stay owner-only after every write,
+            # including writes caused by passkey login.
+            _atomic_write_json(self._sessions_path, snapshot, mode=0o600)
         except Exception as e:
             logger.error(f"Failed to save sessions: {e}")
 
@@ -219,7 +221,10 @@ class AuthManager:
             self._save()
 
     def _save(self):
-        _atomic_write_json(self.auth_path, self._config, indent=2)
+        # auth.json holds password hashes and TOTP secrets. The temp file used
+        # by atomic_write_json inherits the process umask, so set the mode
+        # before the rename to keep the file owner-only after every save.
+        _atomic_write_json(self.auth_path, self._config, indent=2, mode=0o600)
 
     @property
     def users(self) -> Dict[str, Any]:

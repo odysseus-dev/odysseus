@@ -76,6 +76,7 @@ from routes.chat_helpers import (
 )
 from src.action_intents import ToolIntent, classify_tool_intent as _classify_tool_intent
 from src.image_model_ids import looks_like_image_generation_model
+from src.tool_index import OSIRIS_TOOL_NAMES
 from src.tool_policy import (
     WEB_ACCESS_TOOL_NAMES,
     WEB_TOOL_NAMES,
@@ -3697,6 +3698,9 @@ def setup_chat_routes(
             if _corrected_browser_target:
                 _selected_tools = {'private_browser', 'web_fetch', 'web_search'}
                 _required_tools = {'private_browser'}
+            if _tool_intent and _tool_intent.category == "osint":
+                _selected_tools = None
+                _required_tools = set()
             _turn_contract = resolve_turn_contract(
                 capabilities=_turn_capabilities, schemas=_contract_schemas,
                 policy=_contract_policy, required_tools=_required_tools,
@@ -4587,6 +4591,7 @@ def setup_chat_routes(
                         _typed_forced_tools = {
                             "calendar": {"manage_calendar"},
                             "notes": {"manage_notes", "manage_tasks"},
+                            "osint": set(OSIRIS_TOOL_NAMES),
                         }.get(_tool_intent.category, set())
                         if _typed_forced_tools:
                             if _forced_tools is None:

@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v659-notes-reference';
+const CACHE_NAME = 'odysseus-v663-passkeys';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -60,7 +60,7 @@ const PRECACHE = [
   '/static/css/documents-gallery-editor.css?v=20260929csssplit',
   '/static/css/email-calendar-notes-tasks.css?v=20260929csssplit',
   '/static/css/cookbook-research-memory-settings.css?v=20260929csssplit',
-  '/static/app.js?v=20260929csssplit',
+  '/static/app.js?v=20261125livelabels2',
   '/static/js/storage.js',
   '/static/js/appConfig.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',
@@ -71,7 +71,7 @@ const PRECACHE = [
   '/static/js/skills.js?v=20260909kebabconsistency1',
   '/static/js/skillsMetrics.js?v=20260908autonomousskills1',
   '/static/js/tourHints.js',
-  '/static/js/fileHandler.js?v=20260909mobileattachmentedit1',
+  '/static/js/fileHandler.js?v=20261125livelabels2',
   '/static/js/voiceRecorder.js',
   '/static/js/actionMenuOrder.js',
   '/static/js/models.js',
@@ -94,7 +94,7 @@ const PRECACHE = [
   '/static/js/panels.js?v=20260909movepicklayer1',
   '/static/js/theme.js?v=20260911organsrain1',
   '/static/js/censor.js',
-  '/static/js/settings.js?v=20260912writingstyle3',
+  '/static/js/settings.js?v=20261125passkeys1',
   '/static/js/admin.js?v=20260929csssplit',
   '/static/js/chatgptSubscriptionUsage.js',
   '/static/js/init.js?v=20260829chatstyle12',

@@ -435,7 +435,7 @@ class ChatProcessor:
                         headers=t_headers,
                         temperature=0.1,
                         max_tokens=50,
-                        timeout=15,
+                        timeout=30,
                     ).strip()
 
                     if generated_query:

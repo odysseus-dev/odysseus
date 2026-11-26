@@ -56,3 +56,6 @@ timetree*.png
 # Include distribution notices despite the general documentation exclusion.
 !ACKNOWLEDGMENTS.md
 !services/hwfit/data/README.md
+
+# The vendored Faster Whisper source needs its README for setup.py.
+!docker/faster-whisper-src/README.md

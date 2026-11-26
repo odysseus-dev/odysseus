@@ -5,7 +5,7 @@
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js?v=20260916largetoolscroll1';
 import workspaceModule from './js/workspace.js';
-import fileHandlerModule from './js/fileHandler.js?v=20260909mobileattachmentedit1';
+import fileHandlerModule from './js/fileHandler.js?v=20261125livelabels2';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js?v=20260908personaname1';
@@ -278,6 +278,484 @@ async function _createDirectChatFromPreferredModel(opts = {}) {
   return false;
 }
 
+// Webcam privacy controls. A capture is discarded in the browser unless the
+// user chooses to keep it. Kept stills are uploaded without gallery promotion
+// and copied into an owner-only local store. Session end offers bulk deletion.
+const _webcamIdsBySession = new Map();
+let _webcamActiveSessionId = null;
+
+async function _keepWebcamUploads(ids) {
+  if (!ids.length) return [];
+  try {
+    const res = await fetch(`${API_BASE}/api/upload/webcam/keep`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) {
+      uiModule.showToast('Could not store webcam still securely');
+      return [];
+    }
+    const data = await res.json();
+    const kept = Array.isArray(data.kept) ? data.kept : [];
+    if (kept.length !== ids.length) uiModule.showToast('Some webcam stills were not stored securely');
+    return kept;
+  } catch (_) {
+    uiModule.showToast('Could not store webcam still securely');
+    return [];
+  }
+}
+
+async function _deleteWebcamUploads(ids) {
+  if (!ids.length) return [];
+  try {
+    const res = await fetch(`${API_BASE}/api/upload/webcam`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) {
+      uiModule.showToast('Could not delete webcam stills');
+      return [];
+    }
+    const data = await res.json();
+    return Array.isArray(data.deleted) ? data.deleted : [];
+  } catch (_) {
+    uiModule.showToast('Could not delete webcam stills');
+    return [];
+  }
+}
+
+function _trackWebcamUploads(ids) {
+  const sid = sessionModule.getCurrentSessionId?.() || null;
+  if (!sid || !ids.length) return;
+  const set = _webcamIdsBySession.get(sid) || new Set();
+  ids.forEach(id => set.add(id));
+  _webcamIdsBySession.set(sid, set);
+  if (!_webcamActiveSessionId) _webcamActiveSessionId = sid;
+}
+
+async function _maybeDeleteWebcamSession(sid) {
+  const ids = Array.from(_webcamIdsBySession.get(sid) || []);
+  if (!ids.length) return;
+  const choice = await uiModule.styledConfirm(
+    `Delete ${ids.length} webcam still${ids.length === 1 ? '' : 's'} captured in this session?`,
+    {
+      title: 'Webcam privacy',
+      confirmText: 'Delete all',
+      cancelText: 'Keep all',
+      danger: true,
+    }
+  );
+  if (choice !== true) return;
+
+  const deleted = await _deleteWebcamUploads(ids);
+  if (!deleted.length) return;
+  const set = _webcamIdsBySession.get(sid) || new Set();
+  deleted.forEach(id => set.delete(id));
+  if (set.size) _webcamIdsBySession.set(sid, set);
+  else _webcamIdsBySession.delete(sid);
+  uiModule.showToast(`Deleted ${deleted.length} webcam still${deleted.length === 1 ? '' : 's'}`);
+}
+
+function _initWebcamPrivacyEvents() {
+  window.addEventListener('odysseus:webcam-uploaded', async (e) => {
+    const ids = (e.detail && e.detail.ids) || [];
+    if (!Array.isArray(ids) || !ids.length) return;
+    _trackWebcamUploads(ids);
+    await _keepWebcamUploads(ids);
+  });
+
+  window.addEventListener('odysseus:session-changed', async (e) => {
+    const next = e.detail && e.detail.sessionId ? e.detail.sessionId : null;
+    const prev = _webcamActiveSessionId;
+    if (prev && prev !== next) await _maybeDeleteWebcamSession(prev);
+    _webcamActiveSessionId = next;
+  });
+}
+
+// Live object labels use the same camera permission but never store frames.
+// The browser sends one small JPEG at a time to an authenticated local route.
+const _liveLabels = {
+  running: false,
+  stream: null,
+  timer: null,
+  inFlight: false,
+  panel: null,
+  video: null,
+  status: null,
+  labelList: null,
+  overlay: null,
+  canvas: null,
+  lastBlob: null,
+  lastDetections: [],
+  onVisibility: null,
+  onSession: null,
+  onBusy: null,
+  onUnload: null,
+};
+
+function _setLiveStatus(text) {
+  if (_liveLabels.status) _liveLabels.status.textContent = text;
+}
+
+function _renderLiveLabels(detections) {
+  const list = _liveLabels.labelList;
+  if (!list) return;
+  const items = Array.isArray(detections) ? detections : [];
+  _liveLabels.lastDetections = items;
+  list.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement('span');
+    empty.textContent = 'No labels yet';
+    empty.style.cssText = 'opacity:0.65;padding:4px 0;';
+    list.appendChild(empty);
+  } else {
+    items.forEach((item) => {
+      const chip = document.createElement('span');
+      chip.textContent = `${item.label} ${Math.round((item.score || 0) * 100)}%`;
+      chip.style.cssText = 'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.16);border-radius:999px;padding:3px 9px;';
+      list.appendChild(chip);
+    });
+  }
+
+  const overlay = _liveLabels.overlay;
+  const video = _liveLabels.video;
+  if (!overlay || !video) return;
+  overlay.width = video.videoWidth || 640;
+  overlay.height = video.videoHeight || 480;
+  const ctx = overlay.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  ctx.lineWidth = Math.max(2, Math.round(overlay.width / 260));
+  ctx.font = `${Math.max(12, Math.round(overlay.width / 40))}px system-ui, sans-serif`;
+  items.forEach((item) => {
+    if (!Array.isArray(item.box) || item.box.length !== 4) return;
+    const [x1, y1, x2, y2] = item.box;
+    const left = (1 - x2) * overlay.width;
+    const right = (1 - x1) * overlay.width;
+    const top = y1 * overlay.height;
+    const bottom = y2 * overlay.height;
+    ctx.strokeStyle = '#7CFFB2';
+    ctx.fillStyle = '#7CFFB2';
+    ctx.strokeRect(left, top, right - left, bottom - top);
+    const text = String(item.label || '').slice(0, 24);
+    const textWidth = ctx.measureText(text).width;
+    const tagLeft = Math.min(Math.max(left, 0), Math.max(0, overlay.width - textWidth - 8));
+    const tagTop = Math.max(top - 2, 0);
+    ctx.fillRect(tagLeft, tagTop, textWidth + 8, Math.max(18, Math.round(overlay.height / 26)));
+    ctx.fillStyle = '#0c1016';
+    ctx.fillText(text, tagLeft + 4, tagTop + Math.max(14, Math.round(overlay.height / 32)));
+  });
+}
+
+function _ensureLiveLabelsPanel() {
+  let panel = document.getElementById('live-labels-panel');
+  if (panel) return panel;
+
+  panel = document.createElement('div');
+  panel.id = 'live-labels-panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Live object labels');
+  Object.assign(panel.style, {
+    position: 'fixed',
+    right: '18px',
+    bottom: '96px',
+    width: '320px',
+    maxWidth: 'calc(100vw - 36px)',
+    boxSizing: 'border-box',
+    padding: '12px',
+    background: 'rgba(12,16,22,0.95)',
+    color: '#e8eef7',
+    border: '1px solid rgba(255,255,255,0.18)',
+    borderRadius: '12px',
+    boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+    zIndex: '9999',
+    font: '13px/1.4 system-ui, sans-serif',
+  });
+  panel.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+      <strong>Live object labels</strong>
+      <button type="button" data-live-close aria-label="Close" style="border:0;background:transparent;color:inherit;font-size:18px;line-height:1;cursor:pointer;">×</button>
+    </div>
+    <div style="position:relative;width:100%;border-radius:8px;overflow:hidden;background:#000;">
+      <video data-live-video autoplay muted playsinline style="display:block;width:100%;height:auto;transform:scaleX(-1);"></video>
+      <canvas data-live-overlay aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></canvas>
+    </div>
+    <div data-live-status style="margin:8px 0 6px;opacity:0.75;">Starting…</div>
+    <div data-live-labels style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button type="button" data-live-keep style="flex:1;padding:6px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.10);color:inherit;cursor:pointer;">Keep frame</button>
+      <button type="button" data-live-stop style="flex:1;padding:6px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.10);color:inherit;cursor:pointer;">Stop</button>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  _liveLabels.panel = panel;
+  _liveLabels.video = panel.querySelector('[data-live-video]');
+  _liveLabels.status = panel.querySelector('[data-live-status]');
+  _liveLabels.labelList = panel.querySelector('[data-live-labels]');
+  _liveLabels.overlay = panel.querySelector('[data-live-overlay]');
+  panel.querySelector('[data-live-close]').addEventListener('click', () => _stopLiveLabels());
+  panel.querySelector('[data-live-stop]').addEventListener('click', () => _stopLiveLabels());
+  panel.querySelector('[data-live-keep]').addEventListener('click', () => _keepLiveFrame());
+  _renderLiveLabels([]);
+  return panel;
+}
+
+async function _captureLiveFrame() {
+  if (!_liveLabels.running || _liveLabels.inFlight) return;
+  const video = _liveLabels.video;
+  if (!video || video.readyState < 2) return;
+
+  _liveLabels.inFlight = true;
+  try {
+    const canvas = _liveLabels.canvas || document.createElement('canvas');
+    _liveLabels.canvas = canvas;
+    const sourceW = video.videoWidth || 640;
+    const sourceH = video.videoHeight || 480;
+    const scale = Math.min(1, 640 / Math.max(sourceW, sourceH));
+    canvas.width = Math.max(1, Math.round(sourceW * scale));
+    canvas.height = Math.max(1, Math.round(sourceH * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas unavailable');
+    ctx.save();
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (result) => result ? resolve(result) : reject(new Error('Encode failed')),
+        'image/jpeg',
+        0.55
+      );
+    });
+    _liveLabels.lastBlob = blob;
+    _setLiveStatus('Reading frame…');
+
+    const res = await fetch(`${API_BASE}/api/upload/webcam/live-label`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/jpeg' },
+      body: blob,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!_liveLabels.running) return;
+    _renderLiveLabels(Array.isArray(data.detections) ? data.detections : []);
+    _setLiveStatus(`Updated in ${data.elapsed_ms || 0} ms`);
+  } catch (err) {
+    if (_liveLabels.running) _setLiveStatus('Label request failed');
+  } finally {
+    _liveLabels.inFlight = false;
+  }
+}
+
+async function _keepLiveFrame() {
+  if (!_liveLabels.lastBlob) {
+    uiModule.showToast('No frame to keep yet');
+    return;
+  }
+  await _stageWebcamBlob(_liveLabels.lastBlob);
+}
+
+function _stopLiveLabels() {
+  if (!_liveLabels.running && !_liveLabels.stream) return;
+  _liveLabels.running = false;
+  if (_liveLabels.timer) {
+    clearInterval(_liveLabels.timer);
+    _liveLabels.timer = null;
+  }
+  if (_liveLabels.onVisibility) document.removeEventListener('visibilitychange', _liveLabels.onVisibility);
+  if (_liveLabels.onSession) window.removeEventListener('odysseus:session-changed', _liveLabels.onSession);
+  if (_liveLabels.onBusy) window.removeEventListener('odysseus:chat-busy-change', _liveLabels.onBusy);
+  if (_liveLabels.onUnload) window.removeEventListener('beforeunload', _liveLabels.onUnload);
+  _liveLabels.onVisibility = null;
+  _liveLabels.onSession = null;
+  _liveLabels.onBusy = null;
+  _liveLabels.onUnload = null;
+
+  if (_liveLabels.stream) {
+    _liveLabels.stream.getTracks().forEach((track) => track.stop());
+    _liveLabels.stream = null;
+  }
+  if (_liveLabels.video) {
+    try { _liveLabels.video.srcObject = null; } catch (_) {}
+  }
+  if (_liveLabels.panel) {
+    _liveLabels.panel.remove();
+    _liveLabels.panel = null;
+  }
+  _liveLabels.video = null;
+  _liveLabels.status = null;
+  _liveLabels.labelList = null;
+  _liveLabels.overlay = null;
+  _liveLabels.canvas = null;
+  _liveLabels.lastDetections = [];
+  _liveLabels.lastBlob = null;
+  _liveLabels.inFlight = false;
+
+  const btn = el('live-labels-btn');
+  if (btn) {
+    btn.title = 'Live object labels';
+    btn.setAttribute('aria-pressed', 'false');
+  }
+}
+
+async function _startLiveLabels() {
+  if (_liveLabels.running) {
+    _stopLiveLabels();
+    return;
+  }
+  if (!window.isSecureContext) {
+    uiModule.showToast('Camera needs HTTPS');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    uiModule.showToast('Camera API unavailable');
+    return;
+  }
+
+  const btn = el('live-labels-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+    _liveLabels.stream = stream;
+    _ensureLiveLabelsPanel();
+    _liveLabels.video.srcObject = stream;
+    await new Promise((resolve, reject) => {
+      if (_liveLabels.video.readyState >= 1) { resolve(); return; }
+      _liveLabels.video.onloadedmetadata = resolve;
+      _liveLabels.video.onerror = () => reject(new Error('Camera stream failed'));
+    });
+    await _liveLabels.video.play();
+
+    _liveLabels.running = true;
+    _renderLiveLabels([]);
+    _setLiveStatus('Starting…');
+    if (btn) {
+      btn.title = 'Stop live labels';
+      btn.setAttribute('aria-pressed', 'true');
+    }
+
+    _liveLabels.onVisibility = () => { if (document.hidden) _stopLiveLabels(); };
+    _liveLabels.onSession = () => _stopLiveLabels();
+    _liveLabels.onBusy = (e) => { if (e.detail && e.detail.active) _stopLiveLabels(); };
+    _liveLabels.onUnload = () => _stopLiveLabels();
+    document.addEventListener('visibilitychange', _liveLabels.onVisibility);
+    window.addEventListener('odysseus:session-changed', _liveLabels.onSession);
+    window.addEventListener('odysseus:chat-busy-change', _liveLabels.onBusy);
+    window.addEventListener('beforeunload', _liveLabels.onUnload);
+
+    await _captureLiveFrame();
+    _liveLabels.timer = setInterval(_captureLiveFrame, 1500);
+  } catch (err) {
+    const name = err && err.name;
+    let message = 'Live labels failed to start';
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') message = 'Camera permission denied';
+    else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') message = 'No camera found';
+    else if (name === 'NotReadableError' || name === 'TrackStartError') message = 'Camera is busy';
+    uiModule.showToast(message);
+    _stopLiveLabels();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Stage one webcam JPEG through the existing keep/delete and private-store flow.
+async function _stageWebcamBlob(blob) {
+  if (!(blob instanceof Blob)) return false;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const file = new File([blob], `webcam-${stamp}.jpg`, { type: 'image/jpeg' });
+  const keep = await uiModule.styledConfirm(
+    'Keep this webcam still? Keep stores a private copy in your Odysseus data store. Delete discards it before upload.',
+    {
+      title: 'Webcam still',
+      confirmText: 'Keep securely',
+      cancelText: 'Delete',
+    }
+  );
+  if (keep !== true) {
+    uiModule.showToast('Webcam still deleted');
+    return false;
+  }
+  file.__odysseusWebcam = true;
+  await fileHandlerModule.addFiles([file], { skipCrop: true });
+  uiModule.showToast('Webcam still added to chat');
+  const ta = el('message');
+  if (ta) setTimeout(() => ta.focus(), 100);
+  return true;
+}
+
+// Capture one still frame from the local camera and stage it as an image
+// attachment. The frame never leaves the browser until the user chooses to
+// keep it and the normal chat send uploads it through /api/upload.
+async function captureWebcamStill() {
+  const btn = el('webcam-capture-btn');
+  if (!btn || btn.disabled) return;
+  if (!window.isSecureContext) {
+    uiModule.showToast('Camera needs HTTPS');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    uiModule.showToast('Camera API unavailable');
+    return;
+  }
+
+  const originalTitle = btn.title || 'Capture webcam still';
+  btn.disabled = true;
+  btn.title = 'Capturing...';
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    await new Promise((resolve, reject) => {
+      if (video.readyState >= 1) { resolve(); return; }
+      video.onloadedmetadata = resolve;
+      video.onerror = () => reject(new Error('Camera stream failed'));
+    });
+    await video.play();
+
+    const maxDim = 1600;
+    const sourceW = video.videoWidth || 1;
+    const sourceH = video.videoHeight || 1;
+    const scale = Math.min(1, maxDim / Math.max(sourceW, sourceH));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(sourceW * scale));
+    canvas.height = Math.max(1, Math.round(sourceH * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas unavailable');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (result) => result ? resolve(result) : reject(new Error('Encode failed')),
+        'image/jpeg',
+        0.9
+      );
+    });
+    await _stageWebcamBlob(blob);
+  } catch (err) {
+    const name = err && err.name;
+    let message = 'Webcam capture failed';
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') message = 'Camera permission denied';
+    else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') message = 'No camera found';
+    else if (name === 'NotReadableError' || name === 'TrackStartError') message = 'Camera is busy';
+    uiModule.showToast(message);
+  } finally {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    btn.disabled = false;
+    btn.title = originalTitle;
+  }
+}
+
 // ============================================
 // EVENT LISTENERS INITIALIZATION
 // ============================================
@@ -288,6 +766,11 @@ function initializeEventListeners() {
   // File attachments (inside overflow menu)
   const _overflowAttach = el('overflow-attach-btn');
   if (_overflowAttach) _overflowAttach.addEventListener('click', fileHandlerModule.openPicker);
+  const _webcamCapture = el('webcam-capture-btn');
+  if (_webcamCapture) _webcamCapture.addEventListener('click', captureWebcamStill);
+  const _liveLabelsBtn = el('live-labels-btn');
+  if (_liveLabelsBtn) _liveLabelsBtn.addEventListener('click', _startLiveLabels);
+  _initWebcamPrivacyEvents();
   el('file-input').addEventListener('change', async (e)=>{
     await fileHandlerModule.addFiles(Array.from(e.target.files || []));
     e.target.value = '';
@@ -4403,6 +4886,7 @@ function startOdysseusApp() {
       renderContent: markdownModule.renderContent,
       scrollHistory: uiModule.scrollHistoryInstant
     });
+    _webcamActiveSessionId = sessionModule.getCurrentSessionId?.() || null;
 
     // sessionModule is now wired, so every route opener has the modules it
     // drives. The ones that read no session data open here rather than
