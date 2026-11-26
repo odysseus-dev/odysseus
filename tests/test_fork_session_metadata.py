@@ -14,9 +14,10 @@ import routes.history_routes as mod
 
 
 class _FakeSession:
-    def __init__(self, name="", owner=None):
+    def __init__(self, name="", owner=None, project_id=None):
         self.name = name
         self.owner = owner
+        self.project_id = project_id
         self.endpoint_url = ""
         self.model = ""
         self.history = []
@@ -40,8 +41,8 @@ class _FakeSessionManager:
         return self.sessions[session_id]
 
     def create_session(self, session_id=None, name=None, endpoint_url=None,
-                       model=None, rag=False, owner=None, endpoint_id=None):
-        self.created = _FakeSession(name=name, owner=owner)
+                       model=None, rag=False, owner=None, project_id=None, endpoint_id=None):
+        self.created = _FakeSession(name=name, owner=owner, project_id=project_id)
         self.created.endpoint_id = endpoint_id
         return self.created
 
@@ -59,7 +60,7 @@ def _fork_handler(router):
 def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
     monkeypatch.setattr(mod, "_verify_session_owner", lambda *a, **k: None)
 
-    source = _FakeSession(name="Original", owner="alice")
+    source = _FakeSession(name="Original", owner="alice", project_id="project-1")
     source.endpoint_id = "chatgpt-account-b"
     source.history = [
         ChatMessage("user", "hi", {"_db_id": "src-0"}),
@@ -84,6 +85,7 @@ def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
 
     # The forked session got its own metadata dicts...
     new_session = sm.created
+    assert new_session.project_id == "project-1"
     assert new_session.history[0].metadata is not source.history[0].metadata
     assert new_session.history[1].metadata is not source.history[1].metadata
 
