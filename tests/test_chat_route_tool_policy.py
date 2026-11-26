@@ -660,11 +660,11 @@ def test_admin_user_gets_bash_enabled_by_default():
     assert "bash" not in disabled
 
 
-def test_web_search_disabled_by_default_without_explicit_turn_setting():
-    """Missing web settings must not expose web tools by default."""
+def test_web_search_enabled_by_default_without_explicit_turn_setting():
+    """Missing web settings expose web tools by default."""
     disabled = _build_disabled_tools(allow_web_search=None)
-    assert "web_search" in disabled
-    assert "web_fetch" in disabled
+    assert "web_search" not in disabled
+    assert "web_fetch" not in disabled
 
 
 def test_non_privileged_user_without_explicit_flag_still_disabled():
