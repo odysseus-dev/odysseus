@@ -32,6 +32,10 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
+      # Local PowerShell.MCP runtime. Read-only; no TCP port is opened.
+      - /opt/microsoft/powershell/7:/opt/microsoft/powershell/7:ro,z
+      - /opt/powershell-mcp/proxy:/opt/powershell-mcp/proxy:ro,z
+      - /home/opc/.local/share/powershell/Modules/PowerShell.MCP/1.17.1:/opt/powershell-mcp/module:ro,z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
