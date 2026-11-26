@@ -13,10 +13,17 @@ the first one's change is lost. Two tokens guard against that:
   `body_revision`; `guard_note_body` checks the row still holds the body the
   write was computed from, right before the compare-and-swap commit.
 
+Every Notes transaction that writes runs inside `note_lifecycle_lease`,
+taken before its first UPDATE, DELETE or flush and held until it commits or
+rolls back. Account deletion and rename take the same per-account lock
+exclusively before they touch the database, so both sides take the
+lifecycle lock first and the database second.
+
 The caller decides what to do when a write does not land: answer 409, or
 read the row again and re-apply.
 """
 
+import contextlib
 import hashlib
 import inspect as py_inspect
 import json
@@ -124,6 +131,7 @@ def guard_note_body(db, note: Note, expected: Optional[Sequence] = None, user: O
     so calling it earlier blocks every other writer for the rest of the
     request. Returns False when the body moved on; the caller rolls back.
     Metadata-only writers update their own columns independently of this guard.
+    The UPDATE it runs is a write: the caller holds `note_lifecycle_lease`.
     """
     values = body_snapshot(note) if expected is None else tuple(expected)
     stmt = (
@@ -209,6 +217,65 @@ def stored_stamp(db, note_id: str) -> Any:
     and comparing the parsed value back would never match such a row.
     """
     return db.execute(text("SELECT updated_at FROM notes WHERE id = :id"), {"id": note_id}).scalar()
+
+
+# Session.info key: how many leases this session is inside, so only the
+# outermost one ends the transaction.
+_LEASE_DEPTH = "note_lifecycle_lease_depth"
+
+
+def _rollback_quietly(db) -> None:
+    try:
+        db.rollback()
+    except Exception:
+        pass
+
+
+@contextlib.contextmanager
+def note_lifecycle_lease(
+    db,
+    actor: Optional[str] = None,
+    owner: Optional[str] = None,
+    recipients: Optional[Sequence[str]] = None,
+    user_creation_stamps: Optional[dict] = None,
+):
+    """Hold the account lifecycle lock for a whole Notes write transaction.
+
+    Take it after the reads that name the accounts involved and before the
+    first SQL write (an UPDATE, a DELETE, a flush or an autoflush). It checks
+    the accounts are active (and, with `user_creation_stamps`, that they are
+    the accounts the request was admitted for), raising NotePermissionRevoked
+    otherwise. The lock is reentrant, so the commit helpers below run inside it.
+
+    Whatever the block does not commit is rolled back before the lock is
+    released: the outermost lease ends the transaction on every exit, so no
+    write it started still holds a database lock once account deletion runs.
+    """
+    import core.auth as ca
+    auth_mgr = ca.get_auth_manager()
+    with auth_mgr.account_mutation_guard(
+        actor=actor,
+        owner=owner,
+        recipients=recipients,
+        user_creation_stamps=user_creation_stamps,
+        db=db,
+    ):
+        info = getattr(db, "info", None)
+        tracked = isinstance(info, dict)
+        depth = info.get(_LEASE_DEPTH, 0) if tracked else 0
+        if tracked:
+            info[_LEASE_DEPTH] = depth + 1
+        try:
+            yield
+        except BaseException:
+            _rollback_quietly(db)
+            raise
+        else:
+            if depth == 0:
+                _rollback_quietly(db)
+        finally:
+            if tracked:
+                info[_LEASE_DEPTH] = depth
 
 
 def commit_note_transaction(
@@ -328,7 +395,8 @@ def _callable_accepts_user(fn: Callable) -> bool:
 def write_with_retry(db, note_id: str, load: Callable[[], Note], apply: Callable[[Note], Optional[Any]],
                      attempts: int = NOTE_WRITE_ATTEMPTS,
                      guard: Optional[Callable[..., bool]] = None,
-                     user: Optional[str] = None):
+                     user: Optional[str] = None,
+                     user_creation_stamps: Optional[dict] = None):
     """Load, apply and commit-if-unchanged, re-reading and re-applying on a lost race.
 
     `apply(note)` changes the loaded note and returns a value for the caller;
@@ -336,29 +404,33 @@ def write_with_retry(db, note_id: str, load: Callable[[], Note], apply: Callable
     (normally `guard_note_body`) runs right before the commit with the body
     as loaded; False counts as a lost race. Raises NoteChanged when every
     attempt lost, or NotePermissionRevoked immediately without retry if
-    permission was lost.
+    permission was lost. Each attempt runs inside `note_lifecycle_lease` for
+    `user` and the note's owner, from before `apply` (which may write a
+    version row) to the commit or rollback.
     """
     for _ in range(attempts):
         # The stamp before the row: a write landing in between fails the
         # compare below instead of being silently overwritten.
         stamp = stored_stamp(db, note_id)
         note = load()
-        expected = body_snapshot(note)
-        result = apply(note)
-        if guard is not None:
-            guard_ok = guard(db, note, expected, user=user) if _callable_accepts_user(guard) else guard(db, note, expected)
-            if not guard_ok:
-                db.rollback()
+        with note_lifecycle_lease(db, actor=user, owner=getattr(note, "owner", None),
+                                  user_creation_stamps=user_creation_stamps):
+            expected = body_snapshot(note)
+            result = apply(note)
+            if guard is not None:
+                guard_ok = guard(db, note, expected, user=user) if _callable_accepts_user(guard) else guard(db, note, expected)
+                if not guard_ok:
+                    db.rollback()
+                    db.expire_all()
+                    continue
+            try:
+                if _callable_accepts_user(commit_if_unchanged):
+                    commit_if_unchanged(db, note, stamp, user=user)
+                else:
+                    commit_if_unchanged(db, note, stamp)
+            except NoteChanged:
                 db.expire_all()
                 continue
-        try:
-            if _callable_accepts_user(commit_if_unchanged):
-                commit_if_unchanged(db, note, stamp, user=user)
-            else:
-                commit_if_unchanged(db, note, stamp)
-        except NoteChanged:
-            db.expire_all()
-            continue
         db.refresh(note)
         return note, result
     raise NoteChanged()

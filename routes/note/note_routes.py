@@ -1,6 +1,7 @@
 # routes/note_routes.py
 """Google Keep-style notes / checklists API."""
 
+import contextlib
 import hashlib
 import json
 import uuid
@@ -26,6 +27,7 @@ from core.note_writes import (
     commit_note_transaction,
     guard_note_body,
     note_body_revision,
+    note_lifecycle_lease,
     size_refusal,
     sized_fields,
     stored_stamp,
@@ -865,6 +867,39 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             except NotePermissionRevoked as exc:
                 raise HTTPException(exc.status_code, exc.message)
 
+    def _request_stamps(request: Request, user_name: Optional[str]) -> dict:
+        # The account the request was admitted for (set by _owner): a write
+        # for a same-named account created since is refused.
+        stamps = {}
+        owner_created = getattr(getattr(request, "state", None), "owner_created", None)
+        if owner_created is not None and user_name:
+            stamps[user_name] = owner_created
+        return stamps
+
+    def _lease(
+        leases: contextlib.ExitStack,
+        request: Request,
+        db_session,
+        user_name: Optional[str],
+        owner_name: Optional[str] = None,
+        recipients: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Take the account lifecycle lock before this request's first SQL write.
+
+        Held until `leases` closes (the route's `finally`), after the commit
+        or the rollback, so the order is always lifecycle lock, then database.
+        """
+        try:
+            leases.enter_context(note_lifecycle_lease(
+                db_session,
+                actor=user_name,
+                owner=owner_name,
+                recipients=recipients,
+                user_creation_stamps=_request_stamps(request, user_name),
+            ))
+        except NotePermissionRevoked as exc:
+            raise HTTPException(exc.status_code, exc.message)
+
     def _check_active_user_pre_commit(
         request: Request,
         user_name: Optional[str],
@@ -872,28 +907,12 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         owner_name: Optional[str] = None,
         recipients: Optional[Sequence[str]] = None,
     ):
-        stamps = {}
-        owner_created = getattr(getattr(request, "state", None), "owner_created", None)
-        if owner_created is not None and user_name:
-            stamps[user_name] = owner_created
-
-        auth_mgr = getattr(request.app.state, "auth_manager", None)
-        if auth_mgr and hasattr(auth_mgr, "validate_token"):
-            sess_token = getattr(getattr(request, "state", None), "session_token", None)
-            if sess_token and not auth_mgr.validate_token(sess_token):
-                if db_session:
-                    try:
-                        db_session.rollback()
-                    except Exception:
-                        pass
-                raise HTTPException(401, "Session has expired or was revoked")
-
         _commit_note_route(
             db_session,
             user_name=user_name,
             owner_name=owner_name,
             recipients=recipients,
-            user_creation_stamps=stamps,
+            user_creation_stamps=_request_stamps(request, user_name),
         )
 
     def _checked_color(value):
@@ -911,8 +930,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             # modes. There is no separate non-admin account boundary there.
             return True
         try:
-            from core.auth import AuthManager
-            auth_mgr = getattr(request.app.state, "auth_manager", None) or AuthManager()
+            from core.auth import get_auth_manager
+            auth_mgr = getattr(request.app.state, "auth_manager", None) or get_auth_manager()
             if not getattr(auth_mgr, "is_configured", True):
                 return True
             return bool(auth_mgr.is_admin(user))
@@ -1034,6 +1053,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             "source": body.source, "session_id": body.session_id, "gallery_id": body.gallery_id,
         })
         db = SessionLocal()
+        leases = contextlib.ExitStack()
         try:
             note = Note(
                 id=str(uuid.uuid4()),
@@ -1054,14 +1074,16 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 sort_order=body.sort_order if body.sort_order is not None else 0,
             )
             _reserve_new_note_uploads(user, set(), note)
+            _lease(leases, request, db, user, owner_name=user)
             db.add(note)
             db.flush()
             # Read before the commit, so the payload (and its body revision)
             # is the note this request wrote, not a later write's.
             result = _note_to_dict(note, user)
-            _check_active_user_pre_commit(request, user, db_session=db)
+            _check_active_user_pre_commit(request, user, db_session=db, owner_name=user)
             return result
         finally:
+            leases.close()
             db.close()
 
     # --- SHARE TARGETS ---
@@ -1118,7 +1140,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         # version, so it gets the 409 the client handles.
         for _attempt in range(NOTE_WRITE_ATTEMPTS):
             try:
-                return _update_note_once(user, note_id, body)
+                return _update_note_once(user, note_id, body, _request_stamps(request, user))
             except NotePermissionRevoked as exc:
                 raise HTTPException(exc.status_code, exc.message)
             except NoteChanged:
@@ -1145,14 +1167,19 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         # Looked up at call time, so a test can pause or fail the guard.
         return guard_note_body(db, note, expected, user=user)
 
-    def _update_note_once(user: Optional[str], note_id: str, body: NoteUpdate) -> Dict[str, Any]:
+    def _update_note_once(user: Optional[str], note_id: str, body: NoteUpdate,
+                          stamps: Optional[dict] = None) -> Dict[str, Any]:
         db = SessionLocal()
+        leases = contextlib.ExitStack()
         try:
             supplied = body.model_fields_set
             # Read the stamp first: a write landing before the row is loaded
             # then fails the compare instead of being overwritten.
             stamp = stored_stamp(db, note_id)
             note, caps = _load_note(db, note_id, user, "write")
+            # Before the version row, its pruning and the body guard: all write.
+            leases.enter_context(note_lifecycle_lease(
+                db, actor=user, owner=note.owner, user_creation_stamps=stamps))
             # Pin, archive, order, colour, tag, reminder and the agent-session
             # link are the owner's. The dedicated /pin and /archive routes are
             # owner-only, and this generic route must not be a side door.
@@ -1237,6 +1264,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             db.refresh(note)
             return _note_dict_for(db, note, user)
         finally:
+            leases.close()
             db.close()
 
     # --- UNDO THE LAST AGENT EDIT ---
@@ -1250,9 +1278,11 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         """
         user = _owner(request)
         db = SessionLocal()
+        leases = contextlib.ExitStack()
         try:
             stamp = stored_stamp(db, note_id)
             note, _caps = _load_note(db, note_id, user, "manage")
+            _lease(leases, request, db, user, owner_name=note.owner)
             undo = parse_undo(note.agent_undo)
             if not undo:
                 raise HTTPException(404, "No agent edit to undo")
@@ -1272,9 +1302,12 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 db.expire_all()
                 note, _caps = _load_note(db, note_id, user, "read")
                 raise _note_conflict(db, note, user)
+            except NotePermissionRevoked as exc:
+                raise HTTPException(exc.status_code, exc.message)
             db.refresh(note)
             return _note_dict_for(db, note, user)
         finally:
+            leases.close()
             db.close()
 
     # --- VERSION HISTORY (core.note_versions) ---
@@ -1315,9 +1348,11 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         """
         user = _owner(request)
         db = SessionLocal()
+        leases = contextlib.ExitStack()
         try:
             stamp = stored_stamp(db, note_id)
             note, _caps = _load_note(db, note_id, user, "manage")
+            _lease(leases, request, db, user, owner_name=note.owner)
             row = get_version(db, note.id, version_id)
             if row is None:
                 raise HTTPException(404, "Version not found")
@@ -1334,11 +1369,14 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 db.expire_all()
                 note, _caps = _load_note(db, note_id, user, "read")
                 raise _note_conflict(db, note, user)
+            except NotePermissionRevoked as exc:
+                raise HTTPException(exc.status_code, exc.message)
             db.refresh(note)
             # The note, plus the version this restore kept of what it replaced:
             # restoring that one undoes the restore.
             return {**_note_dict_for(db, note, user), "undo_version_id": kept.id if kept is not None else None}
         finally:
+            leases.close()
             db.close()
 
     # --- DELETE ---
@@ -1346,15 +1384,18 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
     def delete_note(request: Request, note_id: str):
         user = _owner(request)
         db = SessionLocal()
+        leases = contextlib.ExitStack()
         try:
             # Owner only. A collaborator leaves through DELETE /{id}/share/{me}.
             note, _caps = _load_note(db, note_id, user, "manage")
+            _lease(leases, request, db, user, owner_name=note.owner)
             sharing.delete_note_shares(db, note.id)
             delete_note_versions(db, [note.id])
             db.delete(note)
             _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
             return {"ok": True}
         finally:
+            leases.close()
             db.close()
 
     # --- TOGGLE PIN ---
@@ -1423,7 +1464,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 return item
 
             try:
-                note, item = write_with_retry(db, note_id, load, flip, guard=_guard_body, user=user)
+                note, item = write_with_retry(db, note_id, load, flip, guard=_guard_body, user=user,
+                                              user_creation_stamps=_request_stamps(request, user))
             except NotePermissionRevoked as exc:
                 raise HTTPException(exc.status_code, exc.message)
             except NoteChanged:
@@ -1464,7 +1506,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 return item
 
             try:
-                note, item = write_with_retry(db, note_id, load, add, guard=_guard_body, user=user)
+                note, item = write_with_retry(db, note_id, load, add, guard=_guard_body, user=user,
+                                              user_creation_stamps=_request_stamps(request, user))
             except NotePermissionRevoked as exc:
                 raise HTTPException(exc.status_code, exc.message)
             except NoteChanged:
@@ -1500,6 +1543,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         if permission is None:
             raise HTTPException(400, "permission must be 'view' or 'edit'")
         db = SessionLocal()
+        leases = contextlib.ExitStack()
         try:
             note, _caps = _load_note(db, note_id, user, "share")
             valid = sharing.known_usernames(getattr(request.app.state, "auth_manager", None))
@@ -1511,6 +1555,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             # unknown name.
             if any(name and name not in valid for name in requested):
                 raise HTTPException(404, sharing.NO_SUCH_ACCOUNT)
+            # upsert_shares autoflushes each new grant as it queries the next.
+            _lease(leases, request, db, user, owner_name=note.owner, recipients=requested)
             written = sharing.upsert_shares(db, note, requested, permission, valid)
             _check_active_user_pre_commit(
                 request,
@@ -1527,6 +1573,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 "shared_with": sharing.roster(grants),
             }
         finally:
+            leases.close()
             db.close()
 
     @router.delete("/{note_id}/share/{username}")
@@ -1535,15 +1582,18 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         user = _owner(request)
         target = sharing.normalize_user(username)
         db = SessionLocal()
+        leases = contextlib.ExitStack()
         try:
             note, caps = _load_note(db, note_id, user, "read")
             leaving = bool(user) and target == sharing.normalize_user(user) and "share" not in caps
             if "share" not in caps and not leaving:
                 raise HTTPException(403, "Only the note's owner can remove other people")
+            _lease(leases, request, db, user, owner_name=note.owner)
             sharing.remove_share(db, note.id, target)
             _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
             return {"ok": True, "left": leaving}
         finally:
+            leases.close()
             db.close()
 
     # --- NOTE-SCOPED MEDIA ---
@@ -1670,12 +1720,16 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         # because there's no second user to attack; we keep that branch
         # explicit and gated on AuthManager.is_configured.
         try:
-            from core.auth import AuthManager
-            _allow_null = not AuthManager().is_configured
+            from core.auth import get_auth_manager
+            auth_mgr = getattr(request.app.state, "auth_manager", None) or get_auth_manager()
+            _allow_null = not auth_mgr.is_configured
         except Exception:
             _allow_null = False
         db = SessionLocal()
+        leases = contextlib.ExitStack()
         try:
+            # Each query below autoflushes the previous note's new order.
+            _lease(leases, request, db, user)
             for i, nid in enumerate(ids):
                 q = db.query(Note).filter(Note.id == nid)
                 if user is not None:
@@ -1689,6 +1743,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             _check_active_user_pre_commit(request, user, db_session=db)
             return {"ok": True, "count": len(ids)}
         finally:
+            leases.close()
             db.close()
 
     return router

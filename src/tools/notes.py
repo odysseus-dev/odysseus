@@ -4,6 +4,7 @@ Extracted from tool_implementations.py as part of slice 1 (#4082/#4071).
 Holds the manage_notes tool (notes + checklists CRUD).
 ``src.tool_implementations`` re-exports these for backward compatibility.
 """
+import contextlib
 import json
 import logging
 import re
@@ -26,6 +27,7 @@ from core.note_writes import (
     commit_note_transaction,
     guard_note_body,
     note_body_revision,
+    note_lifecycle_lease,
     size_refusal,
     sized_fields,
     stored_stamp,
@@ -177,6 +179,28 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     if bound is not None:
         bound.validate()
     db = SessionLocal()
+    # Lifecycle leases taken below, released after the commit or rollback.
+    leases = contextlib.ExitStack()
+
+    def _admitted_stamps():
+        # The owner account the agent run was admitted for: a run that
+        # outlives that account never writes as a same-named new account.
+        from src.agent_runtime.authority import active_request_authority
+        authority = active_request_authority()
+        created = getattr(authority, "owner_created", None) if authority is not None else None
+        name = (owner or "").strip().lower()
+        if created is None or not name or getattr(authority, "owner", None) != name:
+            return None
+        return {name: created}
+
+    def _lease(note_owner):
+        """Lock the accounts before the first SQL write; an error result if refused."""
+        try:
+            leases.enter_context(note_lifecycle_lease(
+                db, actor=owner, owner=note_owner, user_creation_stamps=_admitted_stamps()))
+        except NotePermissionRevoked as exc:
+            return {"error": exc.message, "exit_code": 1}
+        return None
 
     def _body_conflict():
         return {"error": NOTE_BODY_CONFLICT, "conflict": True, "exit_code": 1}
@@ -553,7 +577,8 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             )
             db.add(note)
             try:
-                commit_note_transaction(db, actor=owner, owner=owner)
+                commit_note_transaction(db, actor=owner, owner=owner,
+                                        user_creation_stamps=_admitted_stamps())
             except NotePermissionRevoked as exc:
                 db.rollback()
                 return {"error": exc.message, "exit_code": 1}
@@ -664,6 +689,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return _own(_body_conflict(), note)
             guarded = (args.get("content") is not None or new_items is not None
                        or args.get("note_type") is not None or revision is not None)
+            # Before the version row, its pruning and the body guard: all write.
+            refused = _lease(note.owner)
+            if refused:
+                return _own(refused, note)
             expected_body = body_snapshot(note)
             before = undo_snapshot(note)
             sizes_before = sized_fields(note)
@@ -785,11 +814,15 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             fixture_scope = note_fixture_scope.get()
             if fixture_scope is not None and note.id not in fixture_scope:
                 return {"error": "Target is outside the disposable test fixtures; no change made.", "exit_code": 1}
+            refused = _lease(note.owner)
+            if refused:
+                return refused
             sharing.delete_note_shares(db, note.id)
             delete_note_versions(db, [note.id])
             db.delete(note)
             try:
-                commit_note_transaction(db, actor=owner, owner=getattr(note, "owner", None))
+                commit_note_transaction(db, actor=owner, owner=getattr(note, "owner", None),
+                                        user_creation_stamps=_admitted_stamps())
             except NotePermissionRevoked as exc:
                 db.rollback()
                 return {"error": exc.message, "exit_code": 1}
@@ -825,6 +858,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     return _own(_body_conflict(), note)
             elif scope is None and not _seen_current(owner, note):
                 return _own(_body_conflict(), note)
+            refused = _lease(note.owner)
+            if refused:
+                return _own(refused, note)
             expected_body = body_snapshot(note)
             before = undo_snapshot(note)
             fold_legacy_columns(note)
@@ -842,7 +878,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     record_agent_edit(note, before, scope.session_id)
                 record_version(db, note, before, SOURCE_AGENT, author=owner, session_id=agent_session_id())
                 try:
-                    if not guard_note_body(db, note, expected_body):
+                    if not guard_note_body(db, note, expected_body, user=owner):
                         db.rollback()
                         raise NoteChanged(note.id)
                     commit_if_unchanged(db, note, stamp, user=owner)
@@ -868,4 +904,5 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         logger.error(f"manage_notes error: {e}")
         return {"error": str(e), "exit_code": 1}
     finally:
+        leases.close()
         db.close()

@@ -182,6 +182,13 @@ class _UserLifecycleLock:
     def read_lock(self):
         tid = threading.get_ident()
         with self._lock:
+            # The thread holding the write lock already excludes everyone
+            # else: waiting here for itself would never return.
+            owns_write = self._writer_tid == tid
+        if owns_write:
+            yield
+            return
+        with self._lock:
             if self._reader_threads.get(tid, 0) > 0:
                 self._reader_threads[tid] += 1
             else:
