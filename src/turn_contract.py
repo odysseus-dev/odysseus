@@ -113,7 +113,21 @@ _FAMILY_WORDS = {
     "memory": r"\b(?:memory|memories|memores|remember|forget|past\s+chats?|previous\s+conversations?)\b",
     "documents": r"\b(?:documents?|documets?|docs?|editor)\b",
     "email": r"\b(?:emails?|inbox|mailbox|mail|spam)\b",
-    "search_browser": r"\b(?:search\s+(?:the\s+)?web|web|online|browse|browser|websites?|sites?|news|weather|youtube|arxiv|hugging\s*face)\b|https?://|\b\w+\.(?:com|org|net|io)\b",
+    "search_browser": (
+        r"\b(?:search\s+(?:the\s+)?web|web|online|browse|browser|websites?|sites?|news|weather|youtube|arxiv|hugging\s*face)\b|"
+        r"https?://|\b\w+\.(?:com|org|net|io)\b|"
+        r"\b(?:buscar|busca|busqueda|b\u00fasqueda|noticias|clima|tiempo|pron\u00f3stico|pronostico|en\s+l\u00ednea|en\s+linea|internet|sitio\s+web|p\u00e1gina\s+web|pagina\s+web)\b|"
+        r"\b(?:suchen|suche|nachschlagen|nachrichten|wetter|wettervorhersage|webseite|internetseite)\b|"
+        r"\b(?:rechercher|recherche|chercher|cherche|actualit\u00e9s|actualites|m\u00e9t\u00e9o|meteo|en\s+ligne|site\s+web)\b|"
+        r"\b(?:pesquisar|pesquise|procurar|procure|not\u00edcias|noticias|previs\u00e3o\s+do\s+tempo|previsao\s+do\s+tempo)\b|"
+        r"\b(?:cercare|cerca|notizie|meteo|previsioni\s+del\s+tempo|sito\s+web)\b|"
+        r"\b(?:zoeken|zoek|nieuws|weer|weersverwachting)\b|"
+        r"\b(?:\u043d\u0430\u0439\u0434\u0438|\u043d\u0430\u0439\u0442\u0438|\u043f\u043e\u0438\u0449\u0438|\u043f\u043e\u0438\u0441\u043a|\u043d\u043e\u0432\u043e\u0441\u0442\u0438|\u043f\u043e\u0433\u043e\u0434\u0430|\u043f\u0440\u043e\u0433\u043d\u043e\u0437\s+\u043f\u043e\u0433\u043e\u0434\u044b|\u0432\s+\u0438\u043d\u0442\u0435\u0440\u043d\u0435\u0442\u0435|\u0432\u0435\u0431-\u0441\u0430\u0439\u0442|\u0441\u0430\u0439\u0442)\b|"
+        r"(?:\u641c\u7d22|\u641c\u5c0b|\u67e5\u627e|\u67e5\u8be2|\u67e5\u8a62|\u4e0a\u7f51|\u4e0a\u7db2|\u7f51\u4e0a|\u7db2\u4e0a|\u7f51\u9875|\u7db2\u9801|\u7f51\u7ad9|\u7db2\u7ad9|\u65b0\u95fb|\u65b0\u805e|\u5929\u6c14|\u5929\u6c23|\u9884\u62a5|\u9810\u5831|\u6700\u65b0\u6d88\u606f|\u5b9e\u65f6|\u5be6\u6642)|"
+        r"(?:\u691c\u7d22|\u8abf\u3079\u3066|\u8abf\u3079\u308b|\u30a6\u30a7\u30d6|\u30cd\u30c3\u30c8|\u30cb\u30e5\u30fc\u30b9|\u5929\u6c17|\u5929\u6c17\u4e88\u5831|\u6700\u65b0\u60c5\u5831)|"
+        r"(?:\uac80\uc0c9|\ucc3e\uc544\uc918|\ucc3e\uc544\ubd10|\uc6f9|\uc778\ud130\ub137|\ub274\uc2a4|\ub0a0\uc528|\uc77c\uae30\uc608\ubcf4|\ucd5c\uc2e0\s*\uc815\ubcf4)|"
+        r"(?:\u0627\u0628\u062d\u062b|\u0628\u062d\u062b|\u0623\u062e\u0628\u0627\u0631|\u0627\u062e\u0628\u0627\u0631|\u0627\u0644\u0637\u0642\u0633|\u0627\u0644\u0625\u0646\u062a\u0631\u0646\u062a|\u0627\u0644\u0627\u0646\u062a\u0631\u0646\u062a|\u0645\u0648\u0642\u0639\s+\u0648\u064a\u0628)"
+    ),
     "shell_files": r"\b(?:files?|folders?|directory|shell|terminal|workspace|repo|repository|python|hostname|b?ssh|bash)\b",
     "cookbook_admin": r"\b(?:cookbo{1,2}k|endpoints?|models?|servers?|settings|integrations?)\b",
     "research": r"\bresearch\b",
@@ -738,10 +752,47 @@ def calendar_retiming_request(text: str) -> bool:
     ))
 
 
+_MULTILINGUAL_SEARCH_ACTION = re.compile(
+    r"\b(?:busca|buscar|encuentra|encontrar|consulta|consultar|investiga|investigar|revisa|revisar)\b|"
+    r"\b(?:suche|suchen|finde|finden|nachschlagen|recherchiere|recherchieren)\b|"
+    r"\b(?:cherche|chercher|recherche|rechercher|trouve|trouver)\b|"
+    r"\b(?:pesquise|pesquisar|procure|procurar|encontre|encontrar)\b|"
+    r"\b(?:cerca|cercare|trova|trovare)\b|"
+    r"\b(?:zoek|zoeken|vind|vinden)\b|"
+    r"\b(?:\u043d\u0430\u0439\u0434\u0438|\u043d\u0430\u0439\u0442\u0438|\u043f\u043e\u0438\u0449\u0438|\u043f\u043e\u0438\u0441\u043a\u0430\u0442\u044c|\u0443\u0437\u043d\u0430\u0439|\u0443\u0437\u043d\u0430\u0442\u044c)\b|"
+    r"(?:\u641c\u7d22|\u641c\u5c0b|\u67e5\u627e|\u67e5\u8be2|\u67e5\u8a62|\u641c\u4e00\u4e0b|\u67e5\u4e00\u4e0b|\u627e\u4e00\u4e0b)|"
+    r"(?:\u691c\u7d22\u3057\u3066|\u691c\u7d22|\u8abf\u3079\u3066|\u8abf\u3079\u308b|\u63a2\u3057\u3066|\u63a2\u3059)|"
+    r"(?:\uac80\uc0c9\ud574|\uac80\uc0c9|\ucc3e\uc544\uc918|\ucc3e\uc544\ubd10|\uc54c\uc544\ubd10)|"
+    r"(?:\u0627\u0628\u062d\u062b|\u0628\u062d\u062b|\u0623\u0648\u062c\u062f|\u062a\u062d\u0642\u0642)",
+    re.I,
+)
+
+
+def has_multilingual_web_intent(text: str) -> bool:
+    """Return True when non-English text explicitly expresses web/news/weather search intent."""
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if re.search(_FAMILY_WORDS["search_browser"], raw, re.I) and (
+        _MULTILINGUAL_SEARCH_ACTION.search(raw)
+        or re.search(
+            r"\b(?:noticias|clima|tiempo|pron\u00f3stico|pronostico|nachrichten|wetter|wettervorhersage|"
+            r"actualit\u00e9s|actualites|m\u00e9t\u00e9o|meteo|not\u00edcias|previs\u00e3o|notizie|previsioni|nieuws|weer|"
+            r"\u043d\u043e\u0432\u043e\u0441\u0442\u0438|\u043f\u043e\u0433\u043e\u0434\u0430|\u043f\u0440\u043e\u0433\u043d\u043e\u0437|\u0623\u062e\u0628\u0627\u0631|\u0627\u062e\u0628\u0627\u0631|\u0627\u0644\u0637\u0642\u0633)\b|"
+            r"(?:\u65b0\u95fb|\u65b0\u805e|\u5929\u6c14|\u5929\u6c23|\u9884\u62a5|\u9810\u5831|\u6700\u65b0\u6d88\u606f|\u30cb\u30e5\u30fc\u30b9|\u5929\u6c17|\u5929\u6c17\u4e88\u5831|\u6700\u65b0\u60c5\u5831|\ub274\uc2a4|\ub0a0\uc528|\uc77c\uae30\uc608\ubcf4|\ucd5c\uc2e0\s*\uc815\ubcf4)",
+            raw,
+            re.I,
+        )
+    ):
+        return True
+    return False
+
+
 def _has_action_signal(text: str) -> bool:
     """Recognize a normal action prefix or one transposition/typo in its verb."""
     if (_ACTION.search(text) or _CONTEXTUAL_ACTION.search(text)
-            or _RETURN_TO_ACTION.search(text) or calendar_retiming_request(text)):
+            or _RETURN_TO_ACTION.search(text) or calendar_retiming_request(text)
+            or _MULTILINGUAL_SEARCH_ACTION.search(text)):
         return True
     tokens = re.findall(r"[a-z]+", str(text or "").lower())[:6]
     while tokens and tokens[0] in {"please", "ok", "okay", "also", "then", "yes", "yeah", "sure"}:
@@ -4891,6 +4942,8 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
             if selected else frozenset()
         )
         return selected_families or frozenset({"search_browser"})
+    if has_multilingual_web_intent(text) and not names_personal_store(text):
+        return frozenset({"search_browser"})
     if (
         re.search(r"\b(?:latest|recent|current|today(?:'s)?)\b", text, re.I)
         and re.search(r"\b(?:info(?:rmation)?|news|nees|updates?)\b", text, re.I)

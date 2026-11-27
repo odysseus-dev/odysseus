@@ -102,7 +102,7 @@ from src.agent_runtime.authority import is_internal_tool_request, request_author
 from src.agent_runtime.runtime_selection import uses_compact_preview_runtime
 from src.turn_contract import (
     FAMILY_TOOLS, bind_turn_contract, preserve_bound_editor_selected_tools,
-    requested_capabilities, resolve_turn_contract,
+    has_multilingual_web_intent, requested_capabilities, resolve_turn_contract,
     requests_independent_web_source, requires_external_web_verification,
     selected_tools_for_request,
 )
@@ -2637,6 +2637,7 @@ def setup_chat_routes(
                 r"\b(search|look\s+(?:(?:this|that|it|them|these|those)\s*)?up|lookup|find\s*out|google|browse|web|online|latest|current|today|news|weather|forecast|rate|exchange\s+rate)\b",
                 _msg_l,
                 ))
+                or has_multilingual_web_intent(message)
                 or requires_external_web_verification(message)
             ) and (not _explicit_personal_store_intent or _explicit_web_target)
             _explicit_browser_intent = _is_explicit_browser_automation_request(
