@@ -76,6 +76,7 @@ _ERROR_DETAIL = {
     "auth_or_protocol_error": "authentication or protocol error",
     "no_models": "endpoint returned no models",
     "no_host": "no host configured",
+    "invalid_url": "endpoint URL is missing or invalid",
     "config_source_error": "configuration source could not be read",
     "error": "probe failed",
 }
@@ -375,17 +376,33 @@ def providers_health(endpoints: List[Dict[str, Any]],
     def _label(ep: Dict[str, Any]) -> str:
         return ep.get("name") or _safe_url(ep.get("base_url")) or "endpoint"
 
+    def _valid_http_url(raw_url: Any) -> bool:
+        if not isinstance(raw_url, str):
+            return False
+        cleaned = raw_url.strip()
+        if not cleaned:
+            return False
+        parsed = urlparse(cleaned)
+        return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+
     def _check(_i: int, ep: Dict[str, Any]) -> Dict[str, Any]:
         name = _label(ep)
+        base_url = ep.get("base_url")
+        if not _valid_http_url(base_url):
+            return {"name": name, "ok": False, "model_count": 0,
+                    "latency_ms": 0, "error": "invalid_url"}
+        started = time.monotonic()
         try:
-            models = probe(ep.get("base_url"), ep.get("api_key"),
+            models = probe(base_url.strip(), ep.get("api_key"),
                            timeout=_PROBE_TIMEOUT) or []
         except Exception as e:
+            elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
             return {"name": name, "ok": False, "model_count": 0,
-                    "error": _classify_error(e)}
+                    "latency_ms": elapsed_ms, "error": _classify_error(e)}
+        elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
         count = len(models)
         return {"name": name, "ok": bool(count), "model_count": count,
-                "error": None if count else "no_models"}
+                "latency_ms": elapsed_ms, "error": None if count else "no_models"}
 
     raw = _bounded_map(endpoints, _check, budget=_FANOUT_BUDGET,
                        concurrency=_PROBE_CONCURRENCY)
