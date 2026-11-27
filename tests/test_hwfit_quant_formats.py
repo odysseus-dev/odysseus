@@ -82,3 +82,27 @@ def test_selected_gguf_quant_is_strict_not_lower_quant_fallback():
 
     assert fit["quant"] == "Q8_0"
     assert fit["run_mode"] == "no_fit"
+
+
+@pytest.mark.parametrize("sort", ["score", "newest"])
+def test_rank_models_applies_limit_after_sorting(sort):
+    system = _dual_5060ti_system()
+    complete = rank_models(system, sort=sort, limit=900)
+
+    assert len(complete) > 2, "The authored catalog must exercise truncation"
+
+    limited = rank_models(system, sort=sort, limit=2)
+
+    assert len(limited) == 2
+    assert [row["name"] for row in limited] == [
+        row["name"] for row in complete[:2]
+    ]
+
+
+def test_rank_models_zero_limit_returns_no_results():
+    results = rank_models(
+        _dual_5060ti_system(),
+        limit=0,
+    )
+
+    assert results == []
