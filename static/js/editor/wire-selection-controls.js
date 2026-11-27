@@ -52,6 +52,7 @@ export function wireSelectionControls({
   buildSelectionHintMask, applyImageTool,
   uiModule,
   toggleQuickMask,
+  signal,
 }) {
   document.querySelectorAll('.ge-quick-mask-toggle').forEach(button => {
     button.addEventListener('click', toggleQuickMask);
@@ -190,10 +191,10 @@ export function wireSelectionControls({
     if (!lassoMoreMenu || lassoMoreMenu.hidden) return;
     if (lassoMoreMenu.contains(e.target) || e.target === lassoMore) return;
     closeLassoMore();
-  });
+  }, { signal });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeLassoMore();
-  });
+  }, { signal });
 
   // ── Wand section ──
   document.getElementById('ge-wand-feather')?.addEventListener('input', (e) => {
@@ -300,10 +301,10 @@ export function wireSelectionControls({
       if (menu.hidden) return;
       if (menu.contains(e.target) || e.target === btn) return;
       closeMenu();
-    });
+    }, { signal });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closeMenu();
-    });
+    }, { signal });
   };
   ['ge-sam', 'ge-quickselect', 'ge-objectselect'].forEach((prefix) => {
     document.getElementById(`${prefix}-vis`)?.addEventListener('click', toggleSelectionOverlay);

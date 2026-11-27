@@ -26,7 +26,7 @@ def test_footer_watcher_reacts_to_sheet_resize():
     assert "_liftQuickEdit(); _placeMobileFooter();" in GE
     assert "new ResizeObserver(_settleMobileChrome)" in GE
     assert "new MutationObserver(_settleMobileChrome)" in GE
-    assert "window.addEventListener('resize', _syncMobileChrome)" in GE
+    assert "window.addEventListener('resize', _syncMobileChrome, { signal })" in GE
 
 
 def test_floating_footer_css_is_mobile_only():

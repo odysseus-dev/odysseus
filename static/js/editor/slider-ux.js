@@ -20,7 +20,7 @@
  */
 import { state } from './state.js';
 
-export function wireSliderUx({ registerDocClickAway }) {
+export function wireSliderUx({ registerDocClickAway, signal }) {
   const container = state.container;
   if (!container) return;
 
@@ -117,7 +117,7 @@ export function wireSliderUx({ registerDocClickAway }) {
     if (!sliderBubbleSlider) return;
     bubblePos(sliderBubbleSlider, e.clientX);
     sliderBubble.textContent = bubbleText(sliderBubbleSlider);
-  });
+  }, { signal });
   const scheduleSliderRelease = (slider) => {
     if (!slider) return;
     const old = slidingTimers.get(slider);
@@ -131,7 +131,7 @@ export function wireSliderUx({ registerDocClickAway }) {
   document.addEventListener('pointerup', () => {
     container.querySelectorAll('input[type="range"].is-using').forEach(scheduleSliderRelease);
     hideSliderBubble();
-  });
+  }, { signal });
 
   // ── Click value chip to type a number ──
   // Replaces the chip with a tiny inline input until blur/Enter,

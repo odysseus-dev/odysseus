@@ -43,7 +43,7 @@ function commandById(id) {
   return ACTION_COMMANDS.find(command => command[0] === id) || null;
 }
 
-export function createActionsPanel({ showToast = () => {}, getLayers = null, selectLayer = null } = {}) {
+export function createActionsPanel({ showToast = () => {}, getLayers = null, selectLayer = null, signal } = {}) {
   let steps = [];
   let recording = false;
   let saved = loadSaved();
@@ -230,7 +230,7 @@ export function createActionsPanel({ showToast = () => {}, getLayers = null, sel
     renderSaved();
     showToast(`Saved action "${name}"`);
   });
-  document.addEventListener('click', onDocumentClick, true);
+  document.addEventListener('click', onDocumentClick, { capture: true, signal });
 
   const element = el('div', 'ge-panel');
   element.id = 'ge-panel-actions';

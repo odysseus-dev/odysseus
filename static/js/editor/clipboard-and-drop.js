@@ -34,11 +34,13 @@ let clipboardBindings;
 
 export function wireClipboardAndDrop({
   container, saveState, createLayer, renderLayerPanel, composite,
-  handleImportedImage, uiModule,
+  handleImportedImage, uiModule, signal: sessionSignal,
 }) {
   clipboardBindings?.abort();
-  clipboardBindings = new AbortController();
-  const { signal } = clipboardBindings;
+  const bindings = new AbortController();
+  clipboardBindings = bindings;
+  sessionSignal?.addEventListener('abort', () => bindings.abort(), { once: true });
+  const { signal } = bindings;
 
   const pasteAsLayer = (imgSource, label, offset = { x: 0, y: 0 }) => {
     if (!state.editorOpen) return; // user closed mid-paste

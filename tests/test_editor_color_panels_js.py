@@ -23,7 +23,7 @@ def test_color_panels_module_shape():
 
 def test_right_panel_spreads_extra_panels():
     src = read(RIGHT_PANEL)
-    assert "export function buildRightPanel({ controlsHTML, layerPanelHTML, extraPanels = [], onCloseGroup = null }) {" in src
+    assert "export function buildRightPanel({ controlsHTML, layerPanelHTML, extraPanels = [], onCloseGroup = null, signal }) {" in src
     assert "...(Array.isArray(extraPanels) ? extraPanels : [])," in src
 
 

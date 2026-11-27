@@ -6,7 +6,7 @@
 // behaviour (static/js/document.js updateArrowVisibility): toggle is-at-left /
 // is-at-right so the CSS mask gradient only fades the side that still has
 // content to scroll to.
-export function attachScrollAffordance(el) {
+export function attachScrollAffordance(el, { signal } = {}) {
   if (!el) return () => {};
   if (el.__geScrollAffordance) return el.__geScrollAffordance;
   el.classList.add('ge-scroll-fade');
@@ -37,5 +37,6 @@ export function attachScrollAffordance(el) {
     delete el.__geScrollAffordance;
   };
   el.__geScrollAffordance = detach;
+  signal?.addEventListener('abort', detach, { once: true });
   return detach;
 }

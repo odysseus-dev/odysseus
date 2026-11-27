@@ -23,8 +23,8 @@ def test_scroll_affordance_module_shape():
 def test_gallery_attaches_affordance_to_both_rails():
     src = GALLERY.read_text(encoding="utf-8")
     assert "import { attachScrollAffordance } from './editor/scroll-affordance.js';" in src
-    assert "attachScrollAffordance(container.querySelector('.ge-topbar-left'))" in src
-    assert "attachScrollAffordance(container.querySelector('.ge-toolbar-scroll'))" in src
+    assert "attachScrollAffordance(container.querySelector('.ge-topbar-left'), { signal })" in src
+    assert "attachScrollAffordance(container.querySelector('.ge-toolbar-scroll'), { signal })" in src
 
 
 def test_mobile_css_fades_overflowing_rail_edges():

@@ -367,6 +367,19 @@ let _selectionBoundaryCache = null;
 let _selectionNudgeTimer = null;
 let _selectionNudgeHistorySaved = false;
 let _renderSavedSelectionsMenu = null;
+// One AbortController per openEditor() session. Every window/document
+// listener, observer and body-level overlay installed for that session is
+// tied to its signal, and closeEditor() aborts it. Without this they stayed
+// registered across reopens and kept running against detached DOM.
+let _editorSession = null;
+
+function _editorSessionSignal() {
+  return _editorSession?.signal;
+}
+
+function _onEditorSessionEnd(fn) {
+  _editorSession?.signal.addEventListener('abort', fn, { once: true });
+}
 
 function _cancelSamQuery(showToast = true) {
   if (!_samAbortController) return false;
@@ -1194,6 +1207,7 @@ const _placeMobileFooter = () => {
 };
 
 function _wireAiCommandBox() {
+  const signal = _editorSessionSignal();
   const wrap = document.getElementById('ge-ai-command');
   const toggle = document.getElementById('ge-ai-command-toggle');
   const closeBtn = document.getElementById('ge-ai-command-close');
@@ -1321,7 +1335,7 @@ function _wireAiCommandBox() {
   document.addEventListener('pointerdown', (e) => {
     if (!suggestions || suggestions.hidden) return;
     if (!wrap.contains(e.target)) hideSuggestions();
-  }, true);
+  }, { capture: true, signal });
   suggestions?.addEventListener('pointerdown', (e) => e.preventDefault());
   suggestions?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ai-command-suggestion]');
@@ -1444,11 +1458,11 @@ function _wireAiCommandBox() {
     _liftPoller = setInterval(() => { _liftQuickEdit(); if (++n >= 30) { clearInterval(_liftPoller); _liftPoller = null; } }, 100);
   };
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', _trackLift);
-    window.visualViewport.addEventListener('scroll', _liftQuickEdit);
+    window.visualViewport.addEventListener('resize', _trackLift, { signal });
+    window.visualViewport.addEventListener('scroll', _liftQuickEdit, { signal });
   }
-  window.addEventListener('resize', _liftQuickEdit);
-  document.addEventListener('focusin', (e) => { if (wrap.contains(e.target)) _trackLift(); });
+  window.addEventListener('resize', _liftQuickEdit, { signal });
+  document.addEventListener('focusin', (e) => { if (wrap.contains(e.target)) _trackLift(); }, { signal });
   input.addEventListener('focus', _trackLift);
   input.addEventListener('click', _trackLift);
   wrap.addEventListener('focusin', _trackLift);
@@ -1467,10 +1481,15 @@ function _wireAiCommandBox() {
     const sheet = document.querySelector('.ge-right-panel');
     if (!sheet || sheet.__geQeLiftWatched) return;
     sheet.__geQeLiftWatched = true;
-    try { new MutationObserver(_settleMobileChrome).observe(sheet, { attributes: true, attributeFilter: ['class', 'style'] }); } catch (_) {}
+    try {
+      const mo = new MutationObserver(_settleMobileChrome);
+      mo.observe(sheet, { attributes: true, attributeFilter: ['class', 'style'] });
+      _onEditorSessionEnd(() => mo.disconnect());
+    } catch (_) {}
     if (typeof ResizeObserver !== 'undefined') {
       try {
         const ro = new ResizeObserver(_settleMobileChrome);
+        _onEditorSessionEnd(() => ro.disconnect());
         ro.observe(sheet);
         const layers = sheet.querySelector('.ge-layers');
         if (layers) ro.observe(layers);
@@ -1478,7 +1497,7 @@ function _wireAiCommandBox() {
     }
   };
   _watchSheetForLift();
-  window.addEventListener('resize', _syncMobileChrome);
+  window.addEventListener('resize', _syncMobileChrome, { signal });
   requestAnimationFrame(() => { _watchSheetForLift(); _syncMobileChrome(); });
   let _chromeSettle = 0;
   const _chromeSettleId = setInterval(() => { _watchSheetForLift(); _syncMobileChrome(); if (++_chromeSettle >= 12) clearInterval(_chromeSettleId); }, 150);
@@ -9911,6 +9930,7 @@ function _wireInpaintPopoverWindow() {
 // ── Build DOM ──
 
 function _buildEditor(container) {
+  const signal = _editorSessionSignal();
   document.querySelectorAll('body > #ge-save-menu').forEach(el => el.remove());
   container.innerHTML = '';
   container.className = 'gallery-editor';
@@ -9922,6 +9942,7 @@ function _buildEditor(container) {
   // the big tool-switch handler stays here so it can touch module state.
   let canvasNavigation = null;
   const { toolbar, toolKeyMap: _toolKeyMap, syncActive: _syncToolActive } = _buildToolbar({
+    signal,
     currentTool: state.tool,
     onClearSelection: (which) => {
       if (which === 'marquee' || which === 'wand' || which === 'lasso'
@@ -10249,12 +10270,14 @@ function _buildEditor(container) {
       };
       menu.addEventListener('scroll', sync, { passive: true });
       if (typeof MutationObserver !== 'undefined') {
-        new MutationObserver(sync).observe(menu, { attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+        const mo = new MutationObserver(sync);
+        mo.observe(menu, { attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+        _onEditorSessionEnd(() => mo.disconnect());
       }
       sync();
     };
     topBar.querySelectorAll(MENU_SELECTORS).forEach(wireMenuThumb);
-    window.addEventListener('resize', () => topBar.querySelectorAll(MENU_SELECTORS).forEach((m) => m.dispatchEvent(new Event('scroll'))));
+    window.addEventListener('resize', () => topBar.querySelectorAll(MENU_SELECTORS).forEach((m) => m.dispatchEvent(new Event('scroll'))), { signal });
   }
 
   // Custom scroll indicator for the editor dropdown menus. macOS and headless
@@ -10283,7 +10306,9 @@ function _buildEditor(container) {
       };
       menu.addEventListener('scroll', sync);
       if (typeof MutationObserver !== 'undefined') {
-        new MutationObserver(sync).observe(menu, { attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+        const mo = new MutationObserver(sync);
+        mo.observe(menu, { attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+        _onEditorSessionEnd(() => mo.disconnect());
       }
       sync();
     };
@@ -10301,9 +10326,11 @@ function _buildEditor(container) {
       topBar.classList.toggle('ge-topbar-compact', left.scrollWidth - left.clientWidth > 1);
     };
     syncTopbarCompact();
-    window.addEventListener('resize', syncTopbarCompact);
+    window.addEventListener('resize', syncTopbarCompact, { signal });
     if (typeof ResizeObserver !== 'undefined') {
-      new ResizeObserver(syncTopbarCompact).observe(topBar);
+      const ro = new ResizeObserver(syncTopbarCompact);
+      ro.observe(topBar);
+      _onEditorSessionEnd(() => ro.disconnect());
     }
   }
 
@@ -10428,7 +10455,7 @@ function _buildEditor(container) {
       toolbarMore.classList.toggle('is-visible', max - toolbar.scrollLeft > 8);
     };
     toolbar.addEventListener('scroll', syncMore, { passive: true });
-    window.addEventListener('resize', syncMore);
+    window.addEventListener('resize', syncMore, { signal });
     requestAnimationFrame(syncMore);
     editorBody.appendChild(toolbarWrap);
   }
@@ -10522,6 +10549,7 @@ function _buildEditor(container) {
   // Canvas events (mouse + touch + pinch-zoom + pan) — full
   // implementation in editor/canvas-events.js.
   canvasNavigation = wireCanvasEvents({
+    signal,
     canvasArea,
     beginDraw: _beginDraw,
     continueDraw: _continueDraw,
@@ -10606,6 +10634,7 @@ function _buildEditor(container) {
     requestRender: () => composite(),
   });
   const actionsPanel = createActionsPanel({
+    signal,
     showToast: (message) => uiModule?.showToast?.(message),
     getLayers: () => state.layers.slice(),
     selectLayer: (id) => {
@@ -10616,6 +10645,7 @@ function _buildEditor(container) {
     },
   });
   const { rightPanel, controls, mobilePanels, layerPanel, dock } = buildRightPanel({
+    signal,
     controlsHTML: _controlsHTML,
     layerPanelHTML: _layerPanelHTML,
     extraPanels: [
@@ -10681,8 +10711,8 @@ function _buildEditor(container) {
   // Fade the overflowing edge of the menu row + tool rail so the off-screen
   // File…Help menus and tools are discoverable on phones (audit #5).
   try {
-    attachScrollAffordance(container.querySelector('.ge-topbar-left'));
-    attachScrollAffordance(container.querySelector('.ge-toolbar-scroll'));
+    attachScrollAffordance(container.querySelector('.ge-topbar-left'), { signal });
+    attachScrollAffordance(container.querySelector('.ge-toolbar-scroll'), { signal });
   } catch (_) {}
   {
     const initialStatusTool = document.getElementById('ge-status-tool');
@@ -10765,9 +10795,9 @@ function _buildEditor(container) {
   _syncResponsiveLayout(true);
   try {
     const _mobileMql = window.matchMedia('(max-width: 700px)');
-    _mobileMql.addEventListener('change', () => _syncResponsiveLayout(true));
+    _mobileMql.addEventListener('change', () => _syncResponsiveLayout(true), { signal });
   } catch (_) {}
-  window.addEventListener('resize', () => _syncResponsiveLayout(false), { passive: true });
+  window.addEventListener('resize', () => _syncResponsiveLayout(false), { passive: true, signal });
 
   // Crop options: aspect-ratio presets (Free / Original / 1:1 / 4:5 / 16:9).
   // Choosing one locks new crop drags to the ratio and refits an existing
@@ -10861,7 +10891,7 @@ function _buildEditor(container) {
 
   // Slider UX (expand-while-using, floating bubble, click-to-type) —
   // full implementation in editor/slider-ux.js.
-  wireSliderUx({ registerDocClickAway: _registerDocClickAway });
+  wireSliderUx({ registerDocClickAway: _registerDocClickAway, signal });
 
   // Shortcuts cheatsheet popover — full implementation in
   // editor/shortcuts-popover.js. (Dead `_makeShortcutsDraggable`
@@ -11106,6 +11136,7 @@ function _buildEditor(container) {
   // Export/Download/Project, Edge popup, cross-dropdown coordination) —
   // full implementation in editor/wire-topbar.js.
   wireTopbar({
+    signal,
     undo, redo,
     toggleHistoryPanel: _toggleHistoryPanel,
     toggleCompare: _toggleCompare,
@@ -11205,7 +11236,7 @@ function _buildEditor(container) {
       if (menu.hidden || !menu.isConnected) return;
       if (menu.contains(event.target) || btn.contains(event.target)) return;
       close();
-    });
+    }, { signal });
     // Escape is owned by the Gallery's earliest capture listener, which
     // delegates to window.__galleryEditorHandleEscape; that handler closes an
     // open options "More" panel (see below) before anything else.
@@ -11310,7 +11341,7 @@ function _buildEditor(container) {
 
   // Topbar overflow + canvas-size badge — full implementation in
   // editor/wire-topbar-overflow.js.
-  wireTopbarOverflow({ container, registerDocClickAway: _registerDocClickAway });
+  wireTopbarOverflow({ container, registerDocClickAway: _registerDocClickAway, signal });
 
   // Topbar dropdown menus (Image, Filter, Resize) + the resize-canvas
   // helpers — full implementation in editor/wire-topbar-menus.js. The
@@ -11578,7 +11609,8 @@ function _buildEditor(container) {
       commandPalette.toggle();
     }
   };
-  document.addEventListener('keydown', onCommandPaletteKey);
+  document.addEventListener('keydown', onCommandPaletteKey, { signal });
+  _onEditorSessionEnd(() => commandPalette.element.remove());
 
   // Inpaint side-panel controls (Feather/Strength previews, post-gen
   // edge tuner, mask vis/invert/clear, paint-erase toggle, mask tint
@@ -11613,6 +11645,7 @@ function _buildEditor(container) {
   // Per-tool Opacity / Flow / Softness sliders (Eraser / Brush /
   // Clone) — full implementation in editor/stroke-tool-sliders.js.
   wireStrokeToolSliders({
+    signal,
     onPresetApplied: () => {
       _brushSizeSync(null);
       const values = {
@@ -11677,6 +11710,7 @@ function _buildEditor(container) {
   // Lasso + Magic Wand panel controls — full implementation in
   // editor/wire-selection-controls.js.
   wireSelectionControls({
+    signal,
     composite,
     invertSelection: _invertSelection,
     lassoDeleteSelection: _lassoDeleteSelection,
@@ -11780,7 +11814,7 @@ function _buildEditor(container) {
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-  }, true);
+  }, { capture: true, signal });
 
   // Free Transform entered from a shortcut must swap the options strip the
   // same way picking the Transform tool does — otherwise the previous tool's
@@ -11820,6 +11854,7 @@ function _buildEditor(container) {
   // Keyboard shortcuts — full implementation in
   // editor/keyboard-shortcuts.js.
   wireKeyboardShortcuts({
+    signal,
     openLayerAdjustment: (type) => {
       const layer = activeLayer();
       if (!layer || !layer.canvas || layer.kind === 'adjustment') {
@@ -12885,6 +12920,7 @@ function _buildEditor(container) {
   // Paste + drag-and-drop image import — full implementation in
   // editor/clipboard-and-drop.js.
   wireClipboardAndDrop({
+    signal,
     container,
     saveState: _saveState,
     createLayer,
@@ -13859,6 +13895,10 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
   }
   state.container.style.display = 'flex';
 
+  // A reopen without a close in between must not stack a second set of
+  // global listeners on top of the first.
+  _editorSession?.abort();
+  _editorSession = new AbortController();
   try {
     _buildEditor(state.container);
   } catch (e) {
@@ -14136,6 +14176,10 @@ export function closeEditor(options = {}) {
     const h = state.editorDocClickHandlers.pop();
     try { document.removeEventListener('click', h); } catch {}
   }
+  // Drop every other window/document listener, observer and the command
+  // palette overlay installed by this session.
+  try { _editorSession?.abort(); } catch {}
+  _editorSession = null;
   if (_cursorRaf) { cancelAnimationFrame(_cursorRaf); _cursorRaf = null; }
   _pendingCursorEvent = null;
   _lastCursorRect = null;

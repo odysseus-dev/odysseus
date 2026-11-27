@@ -62,7 +62,7 @@ export function wireTopbar(deps) {
     fitZoom, applyZoom,
     exportToGallery, downloadPNG, exportPNGFile, saveProject, loadProjectPrompt,
     activeLayer, saveState, applyEdgeFeather, composite,
-    registerDocClickAway, uiModule,
+    registerDocClickAway, uiModule, signal,
   } = deps;
 
   // Undo / Redo / History.
@@ -114,7 +114,7 @@ export function wireTopbar(deps) {
         if (willOpen) positionSaveMenu();
       });
       saveMenu.addEventListener('click', () => { setSaveMenuOpen(false); });
-      window.addEventListener('resize', () => { if (!saveMenu.hidden) positionSaveMenu(); });
+      window.addEventListener('resize', () => { if (!saveMenu.hidden) positionSaveMenu(); }, { signal });
       registerDocClickAway((e) => {
         if (!saveMenu.hidden && !saveMenu.contains(e.target) && !saveBtn.contains(e.target)) {
           setSaveMenuOpen(false);
@@ -153,7 +153,7 @@ export function wireTopbar(deps) {
       const m = document.getElementById(id);
       if (m && !m.hidden) m.hidden = true;
     }
-  });
+  }, { signal });
 
   // Edge popup — Width input + Feather / Delete action buttons.
   async function applyEdgeAction(hardDelete) {

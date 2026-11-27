@@ -11,16 +11,19 @@
  * @param {{
  *   container:            HTMLElement,
  *   registerDocClickAway: (handler: (e: Event) => void) => void,
+ *   signal?:              AbortSignal,
  * }} deps
  */
 import { state } from './state.js';
 
 let disposeTopbar;
 
-export function wireTopbarOverflow({ container }) {
+export function wireTopbarOverflow({ container, signal }) {
   disposeTopbar?.();
   const cleanups = [];
-  disposeTopbar = () => cleanups.forEach(cleanup => cleanup());
+  const dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
+  disposeTopbar = dispose;
+  signal?.addEventListener('abort', dispose, { once: true });
   // Canvas-size badge updater (kept simple — it lives in the topbar).
   const sizeLabel = document.getElementById('ge-canvas-size');
   function updateSizeLabel() {

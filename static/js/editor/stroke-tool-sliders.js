@@ -66,7 +66,7 @@ function wireToolSliders(prefix, fields) {
   });
 }
 
-export function wireStrokeToolSliders({ onPresetApplied } = {}) {
+export function wireStrokeToolSliders({ onPresetApplied, signal } = {}) {
   wireToolSliders('eraser', { opacity: 'eraserOpacity', flow: 'eraserFlow', softness: 'eraserSoftness' });
   wireToolSliders('brush',  { opacity: 'brushOpacity',  flow: 'brushFlow',  softness: 'brushSoftness'  });
   wireToolSliders('clone',  { opacity: 'cloneOpacity',  flow: 'cloneFlow',  softness: 'cloneSoftness'  });
@@ -224,8 +224,8 @@ export function wireStrokeToolSliders({ onPresetApplied } = {}) {
     if (!moreMenu || moreMenu.hidden) return;
     if (moreMenu.contains(event.target) || moreBtn?.contains(event.target)) return;
     closeBrushMore();
-  });
+  }, { signal });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeBrushMore();
-  });
+  }, { signal });
 }

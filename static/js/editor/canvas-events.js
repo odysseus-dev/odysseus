@@ -55,10 +55,12 @@ import { wireCanvasContextMenu } from './canvas-context-menu.js';
 
 let canvasWindowBindings;
 
-export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw, cancelDraw, updateBrushCursor, updateEyedropperPreview, syncZoomControls, onViewportChange, onTwoFingerTap, onThreeFingerTap }) {
+export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw, cancelDraw, updateBrushCursor, updateEyedropperPreview, syncZoomControls, onViewportChange, onTwoFingerTap, onThreeFingerTap, signal: sessionSignal }) {
   canvasWindowBindings?.abort();
-  canvasWindowBindings = new AbortController();
-  const { signal } = canvasWindowBindings;
+  const bindings = new AbortController();
+  canvasWindowBindings = bindings;
+  sessionSignal?.addEventListener('abort', () => bindings.abort(), { once: true });
+  const { signal } = bindings;
 
   // Invalidate coordinate cache on layout, scroll, resize or orientation shifts
   window.addEventListener('resize', invalidateCanvasCoordsCache, { signal, passive: true });

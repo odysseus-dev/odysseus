@@ -61,8 +61,10 @@ let keyboardBindings;
 
 export function wireKeyboardShortcuts(deps) {
   keyboardBindings?.abort();
-  keyboardBindings = new AbortController();
-  const { signal } = keyboardBindings;
+  const bindings = new AbortController();
+  keyboardBindings = bindings;
+  deps.signal?.addEventListener('abort', () => bindings.abort(), { once: true });
+  const { signal } = bindings;
   const {
     toolbar, toolKeyMap,
     composite, saveState, undo, redo,

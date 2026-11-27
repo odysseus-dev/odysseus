@@ -28,7 +28,7 @@
 import { state } from '../state.js';
 import { buildDock } from './dock.js';
 
-export function buildRightPanel({ controlsHTML, layerPanelHTML, extraPanels = [], onCloseGroup = null }) {
+export function buildRightPanel({ controlsHTML, layerPanelHTML, extraPanels = [], onCloseGroup = null, signal }) {
   const rightPanel = document.createElement('div');
   rightPanel.className = 'ge-right-panel';
   // Desktop: present Tool Options + Layers as tabs in a dock. Mobile
@@ -239,6 +239,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML, extraPanels = []
       // multi-group stack needs a bit more room to be usable.
       compact: window.innerWidth <= 820,
       onCloseGroup,
+      signal,
     });
     rightPanel.appendChild(dock.dock);
     if (!useDock) dock.dock.style.display = 'none';
@@ -278,7 +279,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML, extraPanels = []
     const delta = panelStartX - e.clientX;
     const next = Math.max(160, Math.min(window.innerWidth - 200, panelStartW + delta));
     rightPanel.style.flex = `0 0 ${next}px`;
-  });
+  }, { signal });
   document.addEventListener('mouseup', () => {
     if (!panelResizing) return;
     panelResizing = false;
@@ -287,7 +288,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML, extraPanels = []
       const w = Math.round(rightPanel.getBoundingClientRect().width);
       localStorage.setItem('ge-right-panel-width', String(w));
     } catch {}
-  });
+  }, { signal });
 
   return { rightPanel, controls, layerPanel, panelResize, dock, mobilePanels };
 }

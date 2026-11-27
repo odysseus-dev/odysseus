@@ -71,7 +71,7 @@ const SECTIONS = [
   [['hand', 'zoom']],
 ];
 
-export function buildToolbar({ currentTool, onSelectTool, onClearSelection }) {
+export function buildToolbar({ currentTool, onSelectTool, onClearSelection, signal }) {
   const toolbar = document.createElement('div');
   toolbar.className = 'ge-toolbar';
   // The tool slots live in their own scroller so the colour swatches can sit
@@ -153,7 +153,7 @@ export function buildToolbar({ currentTool, onSelectTool, onClearSelection }) {
 
   document.addEventListener('click', (ev) => {
     if (!toolbar.contains(ev.target)) closeAllFlyouts();
-  });
+  }, { signal });
 
   let first = true;
   for (const section of SECTIONS) {
