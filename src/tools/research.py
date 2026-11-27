@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from src.constants import DEEP_RESEARCH_DIR
+from src.research_report_lock import research_report_lock
 from src.tools._common import _parse_tool_args
 
 
@@ -30,6 +31,11 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     action = (args.get("action") or "list").lower()
     rid = (args.get("id") or args.get("session_id") or args.get("research_id") or "").strip()
     data_dir = _Path(DEEP_RESEARCH_DIR)
+    scoped_owner: Optional[str] = None
+    if owner is not None:
+        if not isinstance(owner, str) or not owner.strip():
+            return {"error": "Research owner is required.", "exit_code": 1}
+        scoped_owner = owner.strip()
 
     # SECURITY: the research id is interpolated straight into a filesystem
     # path (data/deep_research/<rid>.json) for read AND delete. Without this
@@ -50,9 +56,12 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
         if not rid:
             return {"error": "Provide the research id (from action='list')."}
         p = data_dir / f"{rid}.json"
-        if not p.exists():
-            return {"error": f"Research '{rid}' not found."}
-        d = _load(p) or {}
+        with research_report_lock:
+            if not p.exists():
+                return {"error": f"Research '{rid}' not found."}
+            d = _load(p) or {}
+            if scoped_owner is not None and d.get("owner") != scoped_owner:
+                return {"error": "Research not found or access denied.", "exit_code": 1}
         summary = d.get("result") or d.get("raw_report") or d.get("summary") or d.get("report") or "(no report body)"
         srcs = d.get("sources", []) or []
         out = f"# {d.get('query', '(untitled)')}\n\n{summary}"
@@ -66,26 +75,33 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
         if not rid:
             return {"error": "Provide the research id to delete (from action='list')."}
         p = data_dir / f"{rid}.json"
-        if p.exists():
-            try:
-                p.unlink()
-            except Exception as e:
-                return {"error": f"Failed to delete: {e}"}
-            return {"output": f"Deleted research '{rid}'.", "exit_code": 0}
-        return {"error": f"Research '{rid}' not found."}
+        with research_report_lock:
+            if p.exists():
+                d = _load(p)
+                if not isinstance(d, dict) or (scoped_owner is not None and d.get("owner") != scoped_owner):
+                    return {"error": "Research not found or access denied.", "exit_code": 1}
+                try:
+                    p.unlink()
+                except Exception as e:
+                    return {"error": f"Failed to delete: {e}"}
+                return {"output": f"Deleted research '{rid}'.", "exit_code": 0}
+            return {"error": f"Research '{rid}' not found."}
 
     # default: list — clickable [query](#research-<id>) rows, most-recent first
     search = (args.get("search") or "").lower()
     items = []
-    if data_dir.exists():
-        for p in data_dir.glob("*.json"):
-            d = _load(p)
-            if not d:
-                continue
-            q = d.get("query", "")
-            if search and search not in q.lower():
-                continue
-            items.append((d.get("completed_at", 0) or 0, p.stem, q, len(d.get("sources", []) or [])))
+    with research_report_lock:
+        if data_dir.exists():
+            for p in data_dir.glob("*.json"):
+                d = _load(p)
+                if not d:
+                    continue
+                if scoped_owner is not None and d.get("owner") != scoped_owner:
+                    continue
+                q = d.get("query", "")
+                if search and search not in q.lower():
+                    continue
+                items.append((d.get("completed_at", 0) or 0, p.stem, q, len(d.get("sources", []) or [])))
     items.sort(reverse=True)
     if not items:
         return {"output": "No research found in the library." + (f" (search: {search})" if search else ""), "exit_code": 0}
