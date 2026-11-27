@@ -878,7 +878,8 @@ class TaskScheduler:
         finally:
             db.close()
 
-    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True):
+    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True,
+                            manual: bool = False):
         # Create the run record with status="queued" BEFORE waiting on the
         # semaphore so the UI can show that a manually-triggered task is in
         # line behind another. Once we acquire the slot, flip to "running"
@@ -911,6 +912,7 @@ class TaskScheduler:
                     run_id,
                     release_executing=release_executing,
                     gate_foreground=not bypass_model_slot,
+                    manual=manual,
                 )
                 return
 
@@ -920,6 +922,7 @@ class TaskScheduler:
                     run_id,
                     release_executing=release_executing,
                     gate_foreground=True,
+                    manual=manual,
                 )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
@@ -966,13 +969,19 @@ class TaskScheduler:
         *,
         release_executing: bool = True,
         gate_foreground: bool = True,
+        manual: bool = False,
     ):
         from core.database import SessionLocal, ScheduledTask, TaskRun
 
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
-            if not task or task.status != "active":
+            # A scheduled dispatch only runs a task the scheduler owns (status
+            # "active"). An explicit "Run now" is a one-off the user asked for,
+            # so it also runs while the task is paused; what it must not do is
+            # resume the task or move its next scheduled time (see
+            # preserve_schedule below).
+            if not task or (task.status != "active" and not manual):
                 # Task was paused/deleted while queued — record that outcome
                 # so the run row doesn't sit as "queued" forever.
                 stale = db.query(TaskRun).filter(TaskRun.id == run_id).first()
@@ -982,6 +991,12 @@ class TaskScheduler:
                     stale.error = f"Task no longer active (status={task.status if task else 'deleted'})"
                     db.commit()
                 return
+
+            # An explicit run of a task that is not active (paused, or one the
+            # scheduler already retired) executes, but it does not take over
+            # the schedule: the status stays as the user left it and next_run
+            # is never recomputed or cleared by this run.
+            preserve_schedule = manual and task.status != "active"
 
             if (
                 is_admin_only_task_action(task.task_type, task.action)
@@ -1099,7 +1114,8 @@ class TaskScheduler:
                 run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if run_obj:
                     db.delete(run_obj)
-                task.next_run = when
+                if not preserve_schedule:
+                    task.next_run = when
                 db.commit()
                 return
             except asyncio.CancelledError:
@@ -1128,16 +1144,17 @@ class TaskScheduler:
                 run.result = str(noop)
                 run.finished_at = _utcnow()
                 task.last_run = _utcnow()
-                if (task.trigger_type or "schedule") == "schedule":
-                    task.next_run = compute_next_run(
-                        task.schedule, task.scheduled_time,
-                        task.scheduled_day, task.scheduled_date,
-                        after=_utcnow(),
-                        cron_expression=task.cron_expression,
-                        tz_name=_resolve_task_timezone(db, task),
-                    )
-                else:
-                    task.next_run = None
+                if not preserve_schedule:
+                    if (task.trigger_type or "schedule") == "schedule":
+                        task.next_run = compute_next_run(
+                            task.schedule, task.scheduled_time,
+                            task.scheduled_day, task.scheduled_date,
+                            after=_utcnow(),
+                            cron_expression=task.cron_expression,
+                            tz_name=_resolve_task_timezone(db, task),
+                        )
+                    else:
+                        task.next_run = None
                 db.commit()
                 return
             finally:
@@ -1155,19 +1172,21 @@ class TaskScheduler:
             task.run_count = (task.run_count or 0) + 1
             self._task_defer_counts.pop(task_id, None)
 
-            # Compute next run only for schedule-triggered tasks
-            if (task.trigger_type or "schedule") == "schedule":
-                task.next_run = compute_next_run(
-                    task.schedule, task.scheduled_time,
-                    task.scheduled_day, task.scheduled_date,
-                    after=_utcnow(),
-                    cron_expression=task.cron_expression,
-                    tz_name=_resolve_task_timezone(db, task),
-                )
-                if task.next_run is None and task.schedule == "once":
-                    task.status = "completed"
-            else:
-                task.next_run = None
+            # Compute next run only for schedule-triggered tasks; an explicit
+            # run of a paused task leaves next_run (and the status) as they are.
+            if not preserve_schedule:
+                if (task.trigger_type or "schedule") == "schedule":
+                    task.next_run = compute_next_run(
+                        task.schedule, task.scheduled_time,
+                        task.scheduled_day, task.scheduled_date,
+                        after=_utcnow(),
+                        cron_expression=task.cron_expression,
+                        tz_name=_resolve_task_timezone(db, task),
+                    )
+                    if task.next_run is None and task.schedule == "once":
+                        task.status = "completed"
+                else:
+                    task.next_run = None
 
             db.commit()
             logger.info(f"Task '{task.name}' completed (run {run_id})")
@@ -2457,15 +2476,21 @@ class TaskScheduler:
             raise
 
     async def run_task_now(self, task_id: str, *, force: bool = False):
-        """Manually trigger a task execution."""
+        """Manually trigger a task execution.
+
+        This is an explicit one-off: it runs even when the task is paused, and
+        leaves the task's status and next_run untouched (see
+        `_execute_task_locked`).
+        """
         if force:
-            asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False))
+            asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False,
+                                                   manual=True))
             return True
         async with self._executing_guard():
             if task_id in self._executing:
                 return False
             self._executing.add(task_id)
-        asyncio.create_task(self._execute_task(task_id))
+        asyncio.create_task(self._execute_task(task_id, manual=True))
         return True
 
     async def stop_task(self, task_id: str) -> bool:
