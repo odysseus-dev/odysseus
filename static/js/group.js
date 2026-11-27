@@ -61,7 +61,10 @@ function _initGroupTab() {
     return _modelsCache;
   }
 
-  function _render() {
+  function _render(preservePickers = true) {
+    const pendingPickers = preservePickers
+      ? [...participantsEl.querySelectorAll('[data-group-picker]')]
+      : [];
     participantsEl.innerHTML = '';
     _groupParticipants.forEach((p, idx) => {
       const row = document.createElement('div');
@@ -78,6 +81,7 @@ function _initGroupTab() {
       row.querySelector('button').addEventListener('click', () => { _groupParticipants.splice(idx, 1); _render(); });
       participantsEl.appendChild(row);
     });
+    pendingPickers.forEach(picker => participantsEl.appendChild(picker));
     // startBtn is shared — don't disable it
   }
 
@@ -85,13 +89,14 @@ function _initGroupTab() {
     const [models, characters] = await Promise.all([_getModels(), _getCharacterList()]);
 
     const picker = document.createElement('div');
+    picker.dataset.groupPicker = 'true';
     picker.style.cssText = 'display:flex;gap:4px;align-items:center;';
 
     const charSel = document.createElement('select');
     charSel.className = 'preset-input';
     // add an identifier that this is a character selection
     charSel.dataset.selectionType = "character"
-    charSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
+    charSel.style.cssText = 'font-size:11px;flex:1;';
     charSel.innerHTML = '<option value="">Empty...</option>' +
       characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
 
@@ -99,7 +104,7 @@ function _initGroupTab() {
     modelSel.className = 'preset-input';
     // add an identifier that this is a model selection
     modelSel.dataset.selectionType = "model"
-    modelSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
+    modelSel.style.cssText = 'font-size:11px;flex:1;';
     modelSel.innerHTML = '<option value="">Model…</option>' +
       models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
 
@@ -311,7 +316,7 @@ function _initGroupTab() {
             if (entry.model) _groupParticipants.push(entry);
           });
           _mode = g.mode || 'parallel';
-          _render();
+          _render(false);
         });
         // Long-press / right-click to delete
         chip.addEventListener('contextmenu', async (e) => {
