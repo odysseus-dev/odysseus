@@ -73,3 +73,22 @@ def test_delete_model_rejects_symlink_cache_dir(tmp_path, monkeypatch):
 
     assert exc.value.status_code == 400
     assert (outside / "keep.txt").exists()
+
+
+def test_status_route_reports_resident_clients(monkeypatch):
+    """The 3-4x weight duplication was only visible by grepping app.log; the admin
+    panel needs the resident-client count from an endpoint, not from a log line."""
+    import src.embeddings as embeddings
+
+    status = _route_endpoint("/api/embeddings/status", "GET")
+    monkeypatch.setattr(
+        embeddings, "fastembed_resident_info",
+        lambda: {"clients": 1, "model": "BAAI/bge-large-en-v1.5", "threads": 8, "cache_size": 1},
+    )
+
+    assert status() == {
+        "clients": 1,
+        "model": "BAAI/bge-large-en-v1.5",
+        "threads": 8,
+        "cache_size": 1,
+    }

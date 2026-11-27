@@ -27,6 +27,7 @@ if os.name == "nt":
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import logging
+import threading
 import numpy as np
 import httpx
 from typing import List, Optional
@@ -194,6 +195,7 @@ class FastEmbedClient:
                 raise ValueError("FASTEMBED_THREADS must be between 1 and 256")
             kwargs["threads"] = threads
         self._embedding = TextEmbedding(**kwargs)
+        self.threads = kwargs.get("threads")
         self._dim: Optional[int] = None
         self.url = "local://fastembed"
         logger.info(f"FastEmbed loaded model={self.model}")
@@ -224,6 +226,41 @@ class FastEmbedClient:
             self._dim = vecs.shape[1]
 
         return vecs
+
+
+_shared_fastembed_lock = threading.Lock()
+_shared_fastembed = None  # (key, client)
+
+
+def get_shared_fastembed_client():
+    """Return the process-wide FastEmbed client, loading it once.
+
+    ONNX Runtime keeps a private copy of the weights per session, so a client
+    per embedding lane multiplies the model's memory use. Changing the model or
+    thread settings replaces the client; a failed load is not remembered.
+    """
+    global _shared_fastembed
+    key = (FastEmbedClient, os.getenv("FASTEMBED_MODEL"), os.getenv("FASTEMBED_THREADS"))
+    with _shared_fastembed_lock:
+        if _shared_fastembed is None or _shared_fastembed[0] != key:
+            _shared_fastembed = (key, FastEmbedClient())
+        return _shared_fastembed[1]
+
+
+def fastembed_resident_info() -> dict:
+    """What this process is carrying, for the admin Embedding panel.
+
+    The duplication in #6510 was only visible by grepping app.log for
+    "FastEmbed loaded model"; this makes it a number. One client is kept.
+    """
+    with _shared_fastembed_lock:
+        client = _shared_fastembed[1] if _shared_fastembed else None
+        return {
+            "clients": 1 if client else 0,
+            "model": getattr(client, "model", None),
+            "threads": getattr(client, "threads", None),
+            "cache_size": 1,
+        }
 
 
 def _load_persisted_endpoint() -> dict:
@@ -284,7 +321,7 @@ def get_embedding_client():
 
     # Fall back to local fastembed
     try:
-        client = FastEmbedClient()
+        client = get_shared_fastembed_client()
         client.get_sentence_embedding_dimension()
         logger.info(f"Using local FastEmbed: model={client.model}")
         return client
