@@ -36,7 +36,9 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
-_DATA_DIR = str(_REPO_ROOT / "data")
+from src.constants import DATA_DIR
+
+_DATA_DIR = DATA_DIR
 _mgr: MemoryManager | None = None
 
 

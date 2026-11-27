@@ -21,7 +21,9 @@ quiet_logs()
 import argparse, json, logging, os, sys
 from pathlib import Path
 
-_PATH = _REPO_ROOT / "data" / "presets.json"
+from src.constants import PRESETS_FILE
+
+_PATH = Path(PRESETS_FILE)
 
 
 def _load() -> dict:

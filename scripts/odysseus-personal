@@ -31,14 +31,14 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
-_DATA_DIR = str(_REPO_ROOT / "data")
+from src.constants import PERSONAL_DIR
 _mgr: PersonalDocsManager | None = None
 
 
 def _manager() -> PersonalDocsManager:
     global _mgr
     if _mgr is None:
-        _mgr = PersonalDocsManager(_DATA_DIR)
+        _mgr = PersonalDocsManager(PERSONAL_DIR)
     return _mgr
 
 
