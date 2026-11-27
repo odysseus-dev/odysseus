@@ -43,7 +43,7 @@ def test_tool_rail_scroller_keeps_swatches_out_of_the_tool_column():
     swatches = swatches[:swatches.index("}")]
     assert "position: static;" in swatches
     assert "position: sticky;" not in swatches
-    assert "attachScrollAffordance(container.querySelector('.ge-toolbar-scroll'))" in EDITOR
+    assert "attachScrollAffordance(container.querySelector('.ge-toolbar-scroll'), { signal })" in EDITOR
 
 
 def test_collapsed_quick_edit_pill_does_not_add_canvas_scroll():

@@ -102,12 +102,12 @@ def mock_inventory_and_shards(tmp_path):
     """Provides a realistic 4-shard test distribution matching expected inventory."""
     expected = discover_playwright_test_identities(ROOT)
     sorted_expected = sorted(expected)
-    # Split 137 into 35, 39, 32, 31
+    # Split into 35, 39, 32 and the rest, so a new spec lands in shard 4
     shards_data = [
         sorted_expected[0:35],
         sorted_expected[35:74],
         sorted_expected[74:106],
-        sorted_expected[106:137],
+        sorted_expected[106:],
     ]
     shard_files = []
     for i, data in enumerate(shards_data, 1):
@@ -121,8 +121,8 @@ def test_scenario_01_all_four_shards_succeed_complete_coverage(mock_inventory_an
     expected, shard_files, _ = mock_inventory_and_shards
     ok, msg, meta = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
     assert ok is True
-    assert "Verified all 137 Chromium tests" in msg
-    assert meta["executed_tests"] == 137
+    assert f"Verified all {len(expected)} Chromium tests" in msg
+    assert meta["executed_tests"] == len(expected)
     assert len(meta["missing_identities"]) == 0
     assert len(meta["duplicate_identities"]) == 0
 

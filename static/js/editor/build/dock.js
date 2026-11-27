@@ -23,7 +23,7 @@
  * }} opts
  * @returns {{ dock: HTMLDivElement, show: (id: string) => void, readonly activeId: string|null }}
  */
-export function buildDock({ entries = [], persistKey = 'ge-dock-active', defaultId = null, compact = false, onCloseGroup = null } = {}) {
+export function buildDock({ entries = [], persistKey = 'ge-dock-active', defaultId = null, compact = false, onCloseGroup = null, signal } = {}) {
   const dock = document.createElement('div');
   dock.className = 'ge-dock';
   if (compact) dock.classList.add('ge-dock--compact');
@@ -303,7 +303,7 @@ export function buildDock({ entries = [], persistKey = 'ge-dock-active', default
       w.style.left = Math.min(Math.max(8, r.left), maxL) + 'px';
       w.style.top = Math.min(Math.max(8, r.top), maxT) + 'px';
     });
-  });
+  }, { signal });
 
   // The dock is built before it is attached to the DOM (so its width is 0 at
   // build time and the overflow check above cannot see the real column width).
@@ -313,6 +313,7 @@ export function buildDock({ entries = [], persistKey = 'ge-dock-active', default
   if (typeof ResizeObserver !== 'undefined') {
     const ro = new ResizeObserver(() => groupEls.forEach(el => syncTabsOverflow(el)));
     ro.observe(dock);
+    signal?.addEventListener('abort', () => ro.disconnect(), { once: true });
   }
   requestAnimationFrame(() => groupEls.forEach(el => syncTabsOverflow(el)));
 
