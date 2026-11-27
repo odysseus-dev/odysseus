@@ -483,6 +483,7 @@ def _create_pdf_text_derivative(db, *, source_doc, content: str, owner: Optional
         content=clean,
         summary=summary,
         source="ai",
+        is_autosave=False,
     )
     db.add(new_doc)
     db.add(ver)
@@ -599,6 +600,7 @@ class CreateDocumentTool:
                 content=content,
                 summary=f"Created by {_active_model or 'AI'}",
                 source="ai",
+                is_autosave=False,
             )
             db.add(doc)
             db.add(ver)
@@ -695,6 +697,7 @@ class UpdateDocumentTool:
                 content=new_content,
                 summary=f"Updated by {_active_model or 'AI'}",
                 source="ai",
+                is_autosave=False,
             )
             doc.current_content = new_content
             doc.version_count = new_ver
@@ -849,6 +852,7 @@ class EditDocumentTool:
                         content=updated_content,
                         summary=f"Edited email body by {_active_model or 'AI'}",
                         source="ai",
+                        is_autosave=False,
                     )
                     doc.current_content = updated_content
                     doc.version_count = new_ver
@@ -953,6 +957,7 @@ class EditDocumentTool:
                 content=updated_content,
                 summary=f"Edited by {_active_model or 'AI'} ({applied} edit(s))",
                 source="ai",
+                is_autosave=False,
             )
             doc.current_content = updated_content
             doc.version_count = new_ver
