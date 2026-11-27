@@ -8,7 +8,6 @@ Stores the BW_SESSION key in data/vault.json with restrictive permissions.
 import json
 import logging
 import os
-import shutil
 import asyncio
 from pathlib import Path
 from datetime import datetime
@@ -16,6 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from core.atomic_io import atomic_write_json
 from core.middleware import require_admin
 from core.platform_compat import IS_WINDOWS, safe_chmod, which_tool
 from src.constants import VAULT_FILE as _VAULT_FILE
@@ -71,8 +71,9 @@ def _load_config() -> dict:
 
 
 def _save_config(cfg: dict):
-    VAULT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    VAULT_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # file_mode=0o600 restricts the temp file *before* the BW_SESSION secret
+    # is written into it; the published file inherits that mode via replace.
+    atomic_write_json(str(VAULT_FILE), cfg, indent=2, file_mode=0o600)
     # POSIX: restrict the BW_SESSION store to 0o600. Windows: no-op (profile dir
     # is ACL-restricted already).
     safe_chmod(str(VAULT_FILE), 0o600)
