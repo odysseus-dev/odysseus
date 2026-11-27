@@ -25,6 +25,8 @@ def _run_node(source):
         input=source,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
@@ -99,7 +101,7 @@ def test_connection_recovery_resumes_detached_run_without_resubmitting_selected_
 def _run_browser_case(pattern):
     proc = subprocess.run(
         ["node", "--test", "--test-name-pattern", pattern, "tests/historyResumeRendering.test.mjs"],
-        capture_output=True, text=True, timeout=90,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
