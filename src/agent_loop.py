@@ -25584,7 +25584,6 @@ async def stream_agent_loop(
                     + "\n\n"
                 )
             desc, approved_result = await approved_tool_task
-            _approved_desc = desc
         finally:
             if not approved_tool_task.done():
                 approved_tool_task.cancel()
@@ -25867,15 +25866,18 @@ async def stream_agent_loop(
         elif not tool_result_is_successful(approved_result) and (
             approved_result.get("blocked")
             or approved_result.get("approval_required")
-            or str(_approved_desc or "").endswith(": BLOCKED")
+            or approved_result.get("executed") is False
         ):
             # An approval continuation is a sealed action, not a fresh agent
-            # turn. If dispatch rejects that exact action (for example because
+            # turn. If dispatch refuses that exact action (for example because
             # the tool was disabled between proposal and approval), report the
             # authoritative failure instead of asking the model to improvise a
-            # different domain or invent a generic synthesis. Every dispatch
-            # rejection returns a "<tool>: BLOCKED" description, including the
-            # disabled-tool and turn-contract ones that do not set "blocked".
+            # different domain or invent a generic synthesis. Refusals that do
+            # not set "blocked" mark "executed": False instead (for example a
+            # disabled tool, the turn contract, browser binding or unavailable
+            # containment). Descriptions echo caller input, so never use them,
+            # and a bridge error can follow a started command, so neither is
+            # the nested containment report.
             # An action that ran and failed (HTTP 403, timeout, non-zero exit)
             # is ordinary evidence: its result goes back to the model, which
             # may recover under the same request authority (#6631).

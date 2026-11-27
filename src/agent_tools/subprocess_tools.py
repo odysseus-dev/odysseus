@@ -678,23 +678,23 @@ class HostShellTool:
         ).strip()
         runtime = ctx.get("client_runtime_context")
         if not isinstance(runtime, dict):
-            return {"error": "host_shell: no TUI host bridge advertised", "exit_code": 1}
+            return {"error": "host_shell: no TUI host bridge advertised", "exit_code": 1, "executed": False}
         bridge = runtime.get("host_shell_bridge") or runtime.get("hostShellBridge")
         if not isinstance(bridge, dict):
-            return {"error": "host_shell: no TUI host bridge advertised", "exit_code": 1}
+            return {"error": "host_shell: no TUI host bridge advertised", "exit_code": 1, "executed": False}
 
         url = str(bridge.get("url") or "").strip()
         token = str(bridge.get("token") or "").strip()
         parsed = urlparse(url)
         if not is_host_shell_bridge_url_allowed(url):
-            return {"error": "host_shell: invalid bridge URL", "exit_code": 1}
+            return {"error": "host_shell: invalid bridge URL", "exit_code": 1, "executed": False}
         if not token:
-            return {"error": "host_shell: bridge token missing", "exit_code": 1}
+            return {"error": "host_shell: bridge token missing", "exit_code": 1, "executed": False}
         run_url = host_shell_bridge_endpoint_url(url, "/run")
 
         job_id = str(args.get("job_id") or "").strip()
         if not command and not job_id:
-            return {"error": "host_shell: command or job_id required", "exit_code": 1}
+            return {"error": "host_shell: command or job_id required", "exit_code": 1, "executed": False}
 
         try:
             requested_timeout = int(args.get("timeout") or 30)

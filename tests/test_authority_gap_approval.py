@@ -13,6 +13,8 @@ from src.tool_approval_scopes import ToolApprovalScope
 from src.tool_approvals import ToolApprovalStore
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
 from src.tool_policy import ToolPolicy
+from src.browser_identity import page_unavailable
+from src.containment import ContainmentUnavailable, unavailable_tool_result
 
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
@@ -246,8 +248,16 @@ async def test_approved_gap_runs_once_and_later_ungranted_call_asks_again(monkey
 
 
 @pytest.mark.asyncio
-async def test_failed_approved_action_returns_to_model(monkeypatch):
-    implementation = AsyncMock(return_value=("web_search", {"error": "HTTP 403", "exit_code": 1}))
+@pytest.mark.parametrize("execution_result", [
+    ("web_search", {"error": "HTTP 403", "exit_code": 1}),
+    # Descriptions echo caller input, so their text cannot mark a refusal.
+    ("web_search: news: BLOCKED", {"error": "HTTP 403", "exit_code": 1}),
+    # A bridge error can follow a started command; its nested report is not a refusal.
+    ("web_search", {"error": "bash: bridge request failed: ReadTimeout", "exit_code": 1,
+                    "containment": {"contained": False, "executed": False}}),
+], ids=["http_error", "blocked_text_in_description", "bridge_timeout"])
+async def test_failed_approved_action_returns_to_model(monkeypatch, execution_result):
+    implementation = AsyncMock(return_value=execution_result)
     loop, model_rounds = _patch_loop(monkeypatch, ["The site refused; here is another source."], implementation)
     store = loop.tool_approval_store
     authority = _authority()
@@ -263,11 +273,14 @@ async def test_failed_approved_action_returns_to_model(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dispatch_result", [
     ("web_search", {"error": "Tool disabled", "exit_code": 1, "blocked": True}),
-    # Dispatch rejections that return "<tool>: BLOCKED" without "blocked".
-    ("web_search: BLOCKED", {"error": "Tool 'web_search' is disabled by user.", "exit_code": 1}),
+    # Refusals that do not set "blocked" mark "executed": False instead.
+    ("web_search: BLOCKED", {"error": "Tool 'web_search' is disabled by user.", "exit_code": 1,
+                             "executed": False}),
     ("web_search: BLOCKED", {"error": "Tool 'web_search' is outside the requested turn capabilities.",
-                             "exit_code": 1, "failure_kind": "turn_contract_denied"}),
-], ids=["blocked", "disabled_by_user", "turn_contract_denied"])
+                             "exit_code": 1, "failure_kind": "turn_contract_denied", "executed": False}),
+    ("web_search: UNSUPPORTED", page_unavailable()),
+    ("web_search", unavailable_tool_result(ContainmentUnavailable({"filesystem"}, "bwrap"), tool="web_search")),
+], ids=["blocked", "disabled_by_user", "turn_contract_denied", "browser_binding", "containment_unavailable"])
 async def test_rejected_approved_action_still_ends_turn(monkeypatch, dispatch_result):
     implementation = AsyncMock(return_value=dispatch_result)
     loop, model_rounds = _patch_loop(monkeypatch, ["unexpected"], implementation)
@@ -279,3 +292,61 @@ async def test_rejected_approved_action_still_ends_turn(monkeypatch, dispatch_re
     assert not model_rounds
     finals = [e.get("content", "") for e in events if e.get("type") == "final_response"]
     assert any("could not run" in text for text in finals)
+
+
+class _DenyAllContract:
+    def permits(self, tool):
+        return False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["disabled_by_user", "guide_only", "turn_contract", "unknown_tool"])
+async def test_dispatcher_refusals_are_marked_not_executed(refusal):
+    from src import tool_execution
+    from src.turn_contract import bind_turn_contract
+    tool, kwargs = "web_search", {}
+    if refusal == "disabled_by_user":
+        kwargs["disabled_tools"] = {"web_search"}
+    elif refusal == "guide_only":
+        kwargs["tool_policy"] = ToolPolicy(mode="guide_only", block_all_tool_calls=True)
+    elif refusal == "unknown_tool":
+        tool = "not_a_registered_tool"
+    with bind_turn_contract(_DenyAllContract() if refusal == "turn_contract" else None):
+        _, result = await tool_execution._execute_tool_block_impl(
+            ToolBlock(tool, "latest news"), owner="alice", session_id="s", **kwargs)
+    assert result["executed"] is False and result["exit_code"] == 1
+    assert not result.get("blocked")
+
+
+@pytest.mark.asyncio
+async def test_bridge_and_email_argument_refusals_are_marked_not_executed(monkeypatch):
+    from src import tool_execution
+
+    bridge = {"surface": "odysseus-tui", "session_cwd": "/home/tester/project",
+              "host_shell_bridge": {"url": "http://127.0.0.1:47475/run", "token": "secret"}}
+
+    async def no_bridge_request(*args, **kwargs):
+        raise AssertionError("refused before any bridge request")
+
+    monkeypatch.setattr(tool_execution, "_bridge_post", no_bridge_request)
+    _, result = await tool_execution._route_tool_via_bridge(
+        "write_file", json.dumps({"path": "data.json", "content": {"value": 1}}), None, bridge)
+    assert result["executed"] is False
+
+    class _NoCallMcp:
+        async def call_tool(self, *args, **kwargs):
+            raise AssertionError("refused before any MCP call")
+
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: _NoCallMcp())
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
+    _, result = await tool_execution._execute_tool_block_impl(
+        ToolBlock("list_emails", "account: work"), owner="alice", session_id="s")
+    assert result["executed"] is False and "not valid JSON" in result["error"]
+
+
+def test_refusal_marker_is_not_shown_to_the_model():
+    from src.tool_execution import format_tool_result
+    text = format_tool_result("web_search: BLOCKED", {
+        "error": "Tool 'web_search' is disabled by user.", "exit_code": 1, "executed": False})
+    assert "disabled by user" in text
+    assert "executed" not in text and "**data:**" not in text

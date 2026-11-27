@@ -804,6 +804,7 @@ def unavailable_tool_result(exc: ContainmentUnavailable, *, tool: str) -> dict[s
     return {
         "error": f"{tool}: containment unavailable ({listed}); command not executed",
         "exit_code": 1,
+        "executed": False,
         "containment": {
             "mechanism": exc.mechanism_tried,
             "mode": CONTAINMENT_MODE,

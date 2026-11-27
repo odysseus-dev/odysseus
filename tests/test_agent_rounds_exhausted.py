@@ -4175,6 +4175,7 @@ def test_approval_continuation_cannot_fallback_into_host_shell(monkeypatch):
         # The dispatcher's disabled-tool rejection (tool_execution.py).
         return (f"{block.tool_type}: BLOCKED", {
             "error": f"Tool '{block.tool_type}' is disabled by user.", "exit_code": 1,
+            "executed": False,
         })
 
     async def _fake_stream(_candidates, messages, **kwargs):
