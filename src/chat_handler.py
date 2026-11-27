@@ -29,6 +29,21 @@ from src.youtube_handler import (
 logger = logging.getLogger(__name__)
 
 
+async def _local_ocr_text(path: str) -> str:
+    """Best-effort local OCR for images when no VL description is usable."""
+    try:
+        from src.agent_tools.ocr_engine import extract_image_text
+
+        timeout = float(os.getenv("ODYSSEUS_OCR_TIMEOUT", "20"))
+        result = await asyncio.wait_for(
+            asyncio.to_thread(extract_image_text, path), timeout=timeout
+        )
+        return str((result or {}).get("text") or "").strip()
+    except Exception as exc:
+        logger.warning("local OCR fallback failed: %s", exc)
+        return ""
+
+
 def _sync_upload_vision_to_gallery(file_info: Dict[str, Any], owner: Optional[str], text: str) -> None:
     file_hash = (file_info or {}).get("hash")
     if not file_hash or not text:
@@ -222,6 +237,31 @@ class ChatHandler:
                     sess_owner,
                 )
 
+        if effective_att_ids and not vision_enabled:
+            # Vision is off, so no pixels are sent to any model. Local OCR is
+            # still useful: give the text-only model whatever text the image
+            # contains, and be explicit that it is OCR, not a visual read.
+            meta_by_id = {m["id"]: m for m in attachment_meta}
+            for att_id in effective_att_ids:
+                file_info = files_by_id.get(att_id)
+                if file_info and self.upload_handler.is_image_file(
+                    file_info["name"], file_info.get("mime", "")
+                ):
+                    _ocr_text = await _local_ocr_text(file_info["path"])
+                    if _ocr_text:
+                        _desc = (
+                            "[Local OCR text — vision is disabled, so the chat model "
+                            "cannot see this image. Text extracted from the image:]\n"
+                            + _ocr_text
+                        )
+                    else:
+                        _desc = "[Local OCR found no readable text in this image.]"
+                    enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n{_desc}"
+                    _m = meta_by_id.get(att_id)
+                    if _m is not None:
+                        _m["vision"] = _desc
+                        _m["vision_model"] = "local-ocr"
+
         if effective_att_ids and vision_enabled:
             meta_by_id = {m["id"]: m for m in attachment_meta}
             for att_id in effective_att_ids:
@@ -282,6 +322,19 @@ class ChatHandler:
                                     _sync_upload_vision_to_gallery(file_info, owner, vl_desc)
                                 except Exception:
                                     pass
+                        if not vl_desc or vl_desc.startswith("["):
+                            # No usable vision description. Fall back to local
+                            # OCR and label it clearly so the text-only model
+                            # knows it is reading extracted text, not pixels.
+                            _ocr_text = await _local_ocr_text(file_info["path"])
+                            if _ocr_text:
+                                vl_desc = (
+                                    "[Local OCR text — the chat model cannot see this image. "
+                                    "Text extracted from the image:]\n" + _ocr_text
+                                )
+                            else:
+                                vl_desc = "[Local OCR found no readable text in this image.]"
+                            vl_model = "local-ocr"
                         enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n"
                         if vl_desc:
                             # A separate vision call wrote this, but the chat model sees

@@ -114,6 +114,18 @@ def _process_text_file(path: str) -> str:
         return result
 
 
+def _local_ocr_text(path: str) -> str:
+    """Best-effort local OCR for PDF pages/images when VL is unavailable."""
+    try:
+        from src.agent_tools.ocr_engine import extract_image_text
+
+        result = extract_image_text(path)
+        return str((result or {}).get("text") or "").strip()
+    except Exception as exc:
+        logger.warning("local OCR failed for %s: %s", path, exc)
+        return ""
+
+
 def _process_pdf(
     path: str,
     owner: str | None = None,
@@ -126,17 +138,50 @@ def _process_pdf(
         pdf_text = ""
         reader = PdfReader(path)
 
+        _ocr_doc = None
+        _ocr_page_limit = 12
+        try:
+            _ocr_page_limit = max(1, int(os.getenv("ODYSSEUS_OCR_PDF_MAX_PAGES", "12")))
+        except ValueError:
+            pass
+        try:
+            import pypdfium2 as pdfium
+
+            _ocr_doc = pdfium.PdfDocument(path)
+        except Exception as e:
+            logger.warning(f"pypdfium2 unavailable for page OCR of {path}: {e}")
+
         for page_num, page in enumerate(reader.pages):
             page_text = (page.extract_text() or "").strip()
             if page_text:
                 pdf_text += f"\n\n[Page {page_num + 1} text]:\n{page_text}"
+            elif _ocr_doc is not None and page_num < _ocr_page_limit:
+                # Scanned/image-only page: render it and OCR locally so the
+                # model still gets the text when no vision model is available.
+                try:
+                    if page_num < len(_ocr_doc):
+                        _page_img = _ocr_doc[page_num].render(scale=2.0).to_pil()
+                        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as _tmp:
+                            _tmp_path = _tmp.name
+                        try:
+                            _page_img.save(_tmp_path, "PNG")
+                            _page_ocr = _local_ocr_text(_tmp_path)
+                        finally:
+                            try:
+                                os.unlink(_tmp_path)
+                            except OSError:
+                                pass
+                        if _page_ocr:
+                            pdf_text += f"\n\n[Page {page_num + 1} OCR text]:\n{_page_ocr}"
+                except Exception as e:
+                    logger.warning(f"Local OCR failed for PDF page {page_num + 1}: {e}")
 
-            # For pages with images but little text, try VL model
+            # For pages with images, try VL model (figures can appear on text-heavy pages too)
             try:
                 images = list(page.images)
             except Exception:
                 images = []
-            if analyze_embedded_images and images and len(page_text) < 50:
+            if analyze_embedded_images and images:
                 for img_index, img in enumerate(images[:3]):  # cap at 3 images per page
                     try:
                         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -146,9 +191,13 @@ def _process_pdf(
                             if image.mode == "CMYK":
                                 image = image.convert("RGB")
                             image.save(temp_img_path, "PNG")
-                            ocr_text = analyze_image_with_vl(temp_img_path, owner=owner)
-                            if ocr_text and "unavailable" not in ocr_text.lower():
-                                pdf_text += f"\n\n[Page {page_num + 1} image {img_index + 1} text]: {ocr_text}"
+                            img_text = analyze_image_with_vl(temp_img_path, owner=owner)
+                            if img_text and "unavailable" not in img_text.lower():
+                                pdf_text += f"\n\n[Page {page_num + 1} image {img_index + 1} text]: {img_text}"
+                            else:
+                                _img_ocr = _local_ocr_text(temp_img_path)
+                                if _img_ocr:
+                                    pdf_text += f"\n\n[Page {page_num + 1} image {img_index + 1} OCR text]: {_img_ocr}"
                         finally:
                             try:
                                 os.unlink(temp_img_path)
@@ -157,6 +206,12 @@ def _process_pdf(
                     except Exception as e:
                         logger.warning(f"Failed to analyze image in PDF: {e}")
                         continue
+
+        if _ocr_doc is not None:
+            try:
+                _ocr_doc.close()
+            except Exception:
+                pass
 
         if pdf_text:
             if len(pdf_text) > 15000:
