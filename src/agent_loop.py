@@ -10948,6 +10948,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("files")
     if has(
         r"\b(search|web|google|look up|latest|news|weather|forecast|stock price|price of|website|url|https?://|www\.)\b",
+        r"\b(?:search|look\s+up|browse)\b.{0,30}\b(?:internet|online)\b",
         r"\bcurrent\b.{0,40}\b(?:release|version|cves?|vulnerabilit(?:y|ies)|news|"
         r"weather|forecast|price|cost|status|schedule|score|standings|law|rules?|"
         r"regulations?|specifications?)\b",
@@ -10971,6 +10972,11 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         r"\b(wyszukaj|wyszukać|wyszukac)\b.*\b(internet|internecie|online|web)\b",
         r"\b(sprawd[zź]|znajd[zź])\b.*\b(internet|internecie|online|web)\b",
         r"\b(aktualn\w*|bieżąc\w*|biezac\w*|dzisiaj|teraz)\b.*\b(pogod\w*|temperatur\w*)\b",
+    ):
+        domains.add("web")
+    if has(
+        r"\b(?:sök(?:a|er|ning|t|te)?|senaste|nyheter\w*|väder\w*|aktuell\w*)\b",
+        r"\b(?:pris\w*|kostar|kostnad\w*)\b.{0,60}\b(?:idag|nu|aktuell\w*|senaste|dagens)\b",
     ):
         domains.add("web")
     if has(r"\b(research|deep dive|investigate|look into)\b"):
