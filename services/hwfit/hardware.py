@@ -600,27 +600,41 @@ def _detect_windows():
             } 
         }
         catch {}
-        if (-not $r.gpu_name) { 
-            $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Select-Object -First 1
+        if (-not $r.gpu_name) {
             $GPUDriverKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*"
-            $GPUDeviceID = $wmiGpu.PNPDeviceID.Split('&')[0..1] -join '&'
-            $VRAMfromRegistry = Get-ItemProperty -Path $GPUDriverKey |
-            Where-Object { $_.MatchingDeviceId -like "${GPUDeviceID}*" } |
-            # Sometimes there happen to be multiple driver classes for the same gpu.
-            Select-Object -ExpandProperty HardwareInformation.qwMemorySize -ErrorAction SilentlyContinue -First 1
-            if ($wmiGpu) { 
+            $drivers = @(Get-ItemProperty -Path $GPUDriverKey -ErrorAction SilentlyContinue)
+            # Pick the adapter with the most VRAM, not the first one WMI lists:
+            # on AM5 boards the Radeon iGPU enumerates before the PCIe card.
+            $wmiGpu = $null
+            $bestVram = 0
+            foreach ($g in Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 }) {
+                $vram = [double]$g.AdapterRAM
+                if ($g.PNPDeviceID) {
+                    $GPUDeviceID = $g.PNPDeviceID.Split('&')[0..1] -join '&'
+                    $VRAMfromRegistry = $drivers |
+                    Where-Object { $_.MatchingDeviceId -like "${GPUDeviceID}*" } |
+                    # Sometimes there happen to be multiple driver classes for the same gpu.
+                    Select-Object -ExpandProperty HardwareInformation.qwMemorySize -ErrorAction SilentlyContinue -First 1
+                    # AdapterRAM is a uint32 capped at 4 GB; the driver's 64-bit
+                    # qwMemorySize is accurate unless the driver is broken.
+                    if ($VRAMfromRegistry -ge $vram) { $vram = [double]$VRAMfromRegistry }
+                }
+                if ($vram -gt $bestVram) { $wmiGpu = $g; $bestVram = $vram }
+            }
+            if ($wmiGpu) {
                 $r.gpu_name = $wmiGpu.Name
-                # Edge case: driver is broken, otherwise $wmiGpu.AdapterRAM is redundant
-                if ($VRAMfromRegistry -ge $wmiGpu.AdapterRAM) {
-                    $r.gpu_vram_gb = [math]::Round($VRAMfromRegistry / 1073741824, 1)
+                $r.gpu_vram_gb = [math]::Round($bestVram / 1073741824, 1)
+                $r.gpu_count = 1
+                # WMI doesn't tell us the compute runtime. For AMD (PCI vendor
+                # 1002) mirror _detect_amd(): ROCm/HIP only when the HIP SDK is
+                # installed, otherwise the driver's Vulkan.
+                if ($wmiGpu.PNPDeviceID -match 'VEN_1002') {
+                    $r.gpu_backend = if ($env:HIP_PATH -or (Get-Command hipconfig -ErrorAction SilentlyContinue)) { 'rocm' } else { 'vulkan' }
                 }
                 else {
-                    $r.gpu_vram_gb = [math]::Round($wmiGpu.AdapterRAM / 1073741824, 1)
+                    $r.gpu_backend = 'cpu_x86'
                 }
-                $r.gpu_count = 1
-                # WMI doesn't tell us CUDA/ROCm
-                $r.gpu_backend = 'cpu_x86';
-            } 
+            }
         }
         $r | ConvertTo-Json -Compress
     """
