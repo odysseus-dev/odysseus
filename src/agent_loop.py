@@ -97,7 +97,11 @@ from src.text_scanning import (
     iter_markdown_links,
     replace_markdown_links_with_labels,
 )
-from src.turn_contract import selected_tools_for_request, with_turn_contract
+from src.turn_contract import (
+    names_time_outside_default_calendar_window,
+    selected_tools_for_request,
+    with_turn_contract,
+)
 from src.agent_runtime.journal import propose_action, execute_action
 from src.agent_runtime.completion import with_completion_gate
 from src.agent_runtime.runtime_selection import is_compact_preview_contract
@@ -5528,6 +5532,14 @@ def _normalize_calendar_list_range_args(
             re.IGNORECASE,
         ))
         if not broad_calendar_read:
+            return args, False
+        if (
+            args.get("start") and args.get("end")
+            and names_time_outside_default_calendar_window(user_text)
+        ):
+            # The user named the period ("in January", "for 2026-12-10"), so
+            # keep the model's range. The prompt bounds below don't parse
+            # dates and read a bare month as this year's.
             return args, False
         prompt_bounds = _calendar_bounds_for_prompt(user_text, today=today_date)
         if not prompt_bounds:

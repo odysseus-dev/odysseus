@@ -2493,6 +2493,39 @@ def test_natural_upcoming_schedule_questions_select_calendar(message):
     assert requested_capabilities(message) == {"calendar"}
 
 
+@pytest.mark.parametrize("message", [
+    "What's on my calendar in January?",
+    "Check my calendar for 2026-12-10 and tell me what's on.",
+    "What's on my calendar next month?",
+    "What's on my calendar this year?",
+    "Do I have anything on my calendar on Christmas Day?",
+    "Show my calendar from September 9 to September 18.",
+])
+def test_dated_calendar_questions_are_not_sealed_to_the_default_window(message):
+    # A listing with no start/end covers today plus 14 days, so sealing these
+    # answered "No events between <today> and <today+14>" for the wrong period.
+    assert required_read_operation_for_request(message) is None
+    assert requested_capabilities(message) == {"calendar"}
+
+
+@pytest.mark.parametrize("message", [
+    "What's on my calendar this week and what's the weather going to be?",
+    "What's coming up on my calendar, and do I have any unread emails?",
+])
+def test_compound_calendar_questions_are_not_sealed_to_the_calendar_read(message):
+    assert required_read_operation_for_request(message) is None
+
+
+@pytest.mark.parametrize("message", [
+    "What's on my calendar tomorrow?",
+    "What's on my calendar on Tuesday?",
+    "What's on my calendar next week?",
+])
+def test_near_term_calendar_questions_keep_the_sealed_listing(message):
+    operation = RequiredReadOperation("manage_calendar", {"action": "list_events"})
+    assert required_read_operation_for_request(message) == operation
+
+
 def test_open_calendar_at_named_month_is_ui_navigation():
     message = "now open calendar septmber 2026"
     assert selected_tools_for_request(message) == {"ui_control"}
