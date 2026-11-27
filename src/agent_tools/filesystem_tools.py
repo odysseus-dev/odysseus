@@ -164,6 +164,30 @@ def _python_grep_worker(payload: dict, output_queue) -> None:
         except BaseException:
             pass
 
+def _normalize_eol(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _line_ending(text: str) -> str:
+    """The most common ending, with LF chosen on a tie or an empty file."""
+    crlf = text.count("\r\n")
+    counts = {"\n": text.count("\n") - crlf, "\r\n": crlf, "\r": text.count("\r") - crlf}
+    return max(counts, key=counts.get)
+
+
+def _write_file_text(original: str, body: str) -> str:
+    """Exact write_file post-state, shared with its effect adapter."""
+    if "\n" not in original and "\r" not in original:
+        return body
+    return _normalize_eol(body).replace("\n", _line_ending(original))
+
+
+def _patch_file_text(original: str, hunks: List[List[str]], label: str) -> str:
+    """Match LF patch context and restore the target's predominant ending."""
+    updated = _apply_patch_hunks(_normalize_eol(original), hunks, label)
+    return updated.replace("\n", _line_ending(original))
+
+
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
     if old == new:
         return None
@@ -362,7 +386,7 @@ def _write_new_file_without_overwrite(path: str, body: str) -> None:
     )
 
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as temporary_file:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as temporary_file:
             fd = None
             temporary_file.write(body)
         os.link(temporary_path, path)
@@ -474,7 +498,7 @@ class WriteFileTool:
             def _write():
                 old = ""
                 try:
-                    with open(path, "r", encoding="utf-8") as f:
+                    with open(path, "r", encoding="utf-8", newline="") as f:
                         old = f.read()
                 except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, OSError):
                     old = ""
@@ -511,12 +535,13 @@ class WriteFileTool:
                                 raise _EmptyBodyWouldTruncate(path, existing_bytes)
                             return old, 0
                         raise
-                    return old, len(body)
+                    return old, len(body.encode("utf-8"))
 
+                committed_body = _write_file_text(old, body)
                 attempted.append(True)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(body)
-                return old, len(body)
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    f.write(committed_body)
+                return old, len(committed_body.encode("utf-8"))
             old_content, size = await asyncio.to_thread(_write)
         except _EmptyBodyWouldTruncate as e:
             clear_call = json.dumps({"path": raw_path, "content": ""})
@@ -535,7 +560,8 @@ class WriteFileTool:
         except OSError as e:
             return {"error": f"write_file: {path}: {e}", "exit_code": 1,
                     **({"mutation_attempted": True} if attempted else {})}
-        committed_body = old_content if size == 0 and not declared_clear and not body.strip() else body
+        committed_body = (old_content if size == 0 and not declared_clear and not body.strip()
+                          else _write_file_text(old_content, body))
         diff = _unified_diff(old_content, committed_body, path)
         result = {
             "output": (f"Wrote {size} bytes to {_display_tool_path(path)}" if attempted else
@@ -586,15 +612,15 @@ class ApplyPatchTool:
                 elif kind == "delete":
                     if not os.path.isfile(path):
                         return {"error": f"apply_patch: {op['path']}: not found", "exit_code": 1}
-                    with open(path, "r", encoding="utf-8") as f:
+                    with open(path, "r", encoding="utf-8", newline="") as f:
                         old = f.read()
                     new = ""
                 else:
                     if not os.path.isfile(path):
                         return {"error": f"apply_patch: {op['path']}: not found", "exit_code": 1}
-                    with open(path, "r", encoding="utf-8") as f:
+                    with open(path, "r", encoding="utf-8", newline="") as f:
                         old = f.read()
-                    new = _apply_patch_hunks(old, op["hunks"], op["path"])
+                    new = _patch_file_text(old, op["hunks"], op["path"])
                 prepared.append((kind, path, old, new))
 
             staged: list[tuple[str, str]] = []

@@ -356,6 +356,30 @@ def test_edit_file_postcondition_is_the_requested_content(run, ws):
     assert verdicts(run.journal) == [fx.EffectVerdict.VERIFIED]
 
 
+@pytest.mark.parametrize("eol", [b"\n", b"\r\n", b"\r"])
+def test_write_file_postcondition_keeps_existing_line_endings(run, ws, eol):
+    (ws / "a.txt").write_bytes(eol.join([b"keep", b"before", b""]))
+    expected = eol.join([b"keep", b"after", b""])
+    _, result = run("write_file", {"path": "a.txt", "content": "keep\nafter\n"})
+    assert result["exit_code"] == 0, result
+    assert (ws / "a.txt").read_bytes() == expected
+    obligation, = run.journal.effects.history().claims[0].obligations
+    assert obligation.expected == hashlib.sha256(expected).hexdigest()
+    run("read_file", {"path": "a.txt"})
+    assert verdicts(run.journal) == [fx.EffectVerdict.VERIFIED]
+
+
+def test_write_file_unreadable_pre_state_stays_unverified(run, ws, monkeypatch):
+    (ws / "a.txt").write_bytes(b"before\r\n")
+    from src.agent_runtime import effect_adapters
+    monkeypatch.setattr(effect_adapters, "_PRE_STATE_LIMIT", 2)
+    _, result = run("write_file", {"path": "a.txt", "content": "after\n"})
+    assert result["exit_code"] == 0, result
+    assert run.journal.effects.history().claims[0].obligations == ()
+    run("read_file", {"path": "a.txt"})
+    assert verdicts(run.journal) == [fx.EffectVerdict.UNVERIFIED]
+
+
 def test_edit_file_unrelated_change_cannot_verify(run, ws, monkeypatch):
     (ws / "a.txt").write_text("before\n")
     monkeypatch.setitem(handlers(), "edit_file", unrelated_writer("something else entirely\n"))
@@ -374,9 +398,9 @@ def test_apply_patch_update_postcondition_is_the_requested_content(run, ws):
     _, result = run("apply_patch", {"patch_text": patch})
     assert result["exit_code"] == 0, result
     obligation, = run.journal.effects.history().claims[0].obligations
-    # apply_patch reads with universal newlines and writes LF.
+    # Patch context is LF, but the target's CRLF ending is retained.
     assert (obligation.predicate, obligation.expected) == (fx.Predicate.CONTENT_SHA256,
-                                                           sha("line1\nline_updated\n"))
+                                                           sha("line1\r\nline_updated\r\n"))
     run("read_file", {"path": "a.txt"})
     assert verdicts(run.journal) == [fx.EffectVerdict.VERIFIED]
 
