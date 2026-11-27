@@ -594,3 +594,27 @@ async def test_authority_denial_cannot_create_completion_receipt(monkeypatch):
     assert journal.actions[0].execution_id is None
     assert journal.actions[0].outcome["authoritative"] is False
     assert journal.actions[0].outcome["blocked"] is True
+
+
+def test_same_request_rebind_narrows_without_delegating():
+    # Re-binding the active top-level request (tool execution binds a
+    # restricted copy of it) narrows grants but is not a delegation. Marking
+    # it inherited made producers refuse every exact-approved process/browser
+    # action, because exact admission requires `not authority.inherited`.
+    parent = authority("bash")
+    with bind_request_authority(parent):
+        narrowed = replace(parent, grants=(OperationGrant("bash"),))
+        with bind_request_authority(narrowed) as effective:
+            assert effective.request_id == parent.request_id
+            assert effective.inherited is False
+
+
+def test_child_request_rebind_stays_inherited():
+    # A different request id is a delegation, so it must keep being inherited
+    # even though the same intersect path runs.
+    parent = authority("bash")
+    with bind_request_authority(parent):
+        child = replace(parent, request_id="request-child")
+        with bind_request_authority(child) as effective:
+            assert effective.inherited is True
+
