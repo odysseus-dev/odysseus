@@ -5,9 +5,18 @@ import os
 from typing import Optional
 from fastapi import Request, HTTPException
 
+from src.constants import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH
 from src.owner_identity import auth_disabled, effective_storage_owner
 
 logger = logging.getLogger(__name__)
+
+
+def validate_password_length(password: str) -> None:
+    """Raise HTTPException(400, ...) if password violates min/max length policy."""
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+    if len(password.encode("utf-8")) > PASSWORD_MAX_LENGTH:
+        raise HTTPException(400, f"Password must be {PASSWORD_MAX_LENGTH} bytes or fewer")
 
 
 def is_direct_loopback_request(request: Request) -> bool:
