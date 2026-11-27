@@ -116,6 +116,16 @@ def _set_admin(monkeypatch, is_admin: bool):
     monkeypatch.delenv("EMAIL_ALLOW_PRIVATE_IPS", raising=False)
 
 
+def _patch_socket_creation():
+    """Record new sockets while keeping ``socket.socket`` a real class.
+
+    Replacing the class with a mock also breaks any event loop running across
+    the patch: Windows' proactor calls ``isinstance(conn, socket.socket)`` on its
+    self-pipe, and a mock there raises TypeError and leaves the loop hanging.
+    """
+    return mock.patch.object(socket.socket, "__init__", return_value=None)
+
+
 class _Req:
     def __init__(self, body):
         self._body = body
@@ -136,7 +146,7 @@ async def test_test_connection_rejects_loopback_for_non_admin_before_any_socket(
         "imap_starttls": False,
         "smtp_host": "169.254.169.254", "smtp_port": 80, "smtp_security": "none",
     }
-    with mock.patch("socket.socket") as create_socket:
+    with _patch_socket_creation() as create_socket:
         result = await test_conn(req=_Req(body), owner="regular-user")
 
     assert result["ok"] is False
@@ -153,7 +163,7 @@ async def test_test_connection_metadata_ip_rejected_even_for_admin(monkeypatch):
     test_conn = _route(router, "/api/email/accounts/test", "POST")
 
     body = {"imap_host": "169.254.169.254", "imap_port": 80, "imap_user": "x", "imap_password": "x", "imap_starttls": True}
-    with mock.patch("socket.socket") as create_socket:
+    with _patch_socket_creation() as create_socket:
         result = await test_conn(req=_Req(body), owner="admin")
     assert result["ok"] is False
     assert ("link-local" in result["imap"]["error"] or "server address is not allowed" in result["imap"]["error"])
@@ -305,7 +315,7 @@ async def test_test_connection_endpoint_dns_rebinding_blocked(monkeypatch):
     }
     rebinding_addrs = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 993))]
     with mock.patch("socket.getaddrinfo", return_value=rebinding_addrs), \
-         mock.patch("socket.socket") as create_socket:
+         _patch_socket_creation() as create_socket:
         result = await test_conn(req=_Req(body), owner="regular-user")
 
     assert result["ok"] is False
