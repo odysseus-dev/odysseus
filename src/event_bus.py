@@ -17,6 +17,7 @@ from src.constants import AUTH_FILE
 logger = logging.getLogger(__name__)
 
 _task_scheduler = None
+_pending_event_tasks: set[asyncio.Task] = set()
 
 
 def _event_automation_enabled_for_owner(owner: Optional[str]) -> bool:
@@ -35,6 +36,12 @@ def get_task_scheduler():
     return _task_scheduler
 
 
+def _schedule_event_task(loop: asyncio.AbstractEventLoop, event_name: str, owner: Optional[str]) -> None:
+    task = loop.create_task(_handle_event(event_name, owner))
+    _pending_event_tasks.add(task)
+    task.add_done_callback(_pending_event_tasks.discard)
+
+
 def fire_event(event_name: str, owner: Optional[str] = None):
     """Fire an event — increments counters and triggers tasks that hit threshold.
 
@@ -47,7 +54,7 @@ def fire_event(event_name: str, owner: Optional[str] = None):
         # can appear to hang while an event-triggered task is running.
         # Keep the handoff outside the response flush window. Event-triggered
         # tasks may still perform synchronous work before their first await.
-        loop.call_later(1.0, lambda: loop.create_task(_handle_event(event_name, owner)))
+        loop.call_later(1.0, _schedule_event_task, loop, event_name, owner)
     except RuntimeError:
         # No running loop — run in a new one (shouldn't happen in FastAPI)
         asyncio.run(_handle_event(event_name, owner))
