@@ -1942,6 +1942,13 @@ def setup_cookbook_routes() -> APIRouter:
                 # there via --user and the non-login serve shell otherwise can't
                 # find the `vllm` CLI ("command not found"). Mirrors llama.cpp above.
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
+                if not remote:
+                    runner_lines.append(
+                        'ODYSSEUS_PY_SCRIPTS="$(python3 -c \'import os, sys, sysconfig; '
+                        'dirs=[os.path.dirname(sys.executable), sysconfig.get_path("scripts"), sysconfig.get_path("scripts", "posix_user")]; '
+                        'print(":".join(dict.fromkeys(d for d in dirs if d)))\' 2>/dev/null || true)"'
+                    )
+                    runner_lines.append('if [ -n "$ODYSSEUS_PY_SCRIPTS" ]; then export PATH="$ODYSSEUS_PY_SCRIPTS:$PATH"; fi')
                 runner_lines.append('if ! command -v vllm &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: vLLM is not installed."')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
@@ -4206,6 +4213,13 @@ def setup_cookbook_routes() -> APIRouter:
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
             output_tail = error_aware_output_tail(full_snapshot, status)
+
+            if "_dep" in session_id and status in {"completed", "error", "stopped"}:
+                try:
+                    from routes.shell_routes import invalidate_package_status_cache
+                    invalidate_package_status_cache()
+                except Exception:
+                    pass
 
             results.append({
                 "session_id": session_id,
