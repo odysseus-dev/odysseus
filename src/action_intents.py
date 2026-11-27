@@ -133,6 +133,15 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("calendar", "calendar agenda question", r"\bwhat(?:'s| is)\s+on\s+(?:my\s+)?calendar\b"),
         ("calendar", "next calendar item question", r"\bwhen\s+(?:is|are)\s+(?:my\s+)?next\s+(?:event|meeting|appointment|class)\b"),
 
+        # Documents, Research Library, and personal library lookups.
+        ("documents", "document inventory question", r"\b(?:what|which)\s+(?:documents?|docs?)\s+(?:do\s+i|have\s+i)\s+(?:have|saved|created|got)\b"),
+        ("documents", "document lookup request", rf"{_PLEASE}(?:list|show|find|search|check|read|open)\b.{{0,80}}\b(?:my\s+|the\s+|saved\s+)?(?:documents?|docs?)\b"),
+        ("documents", "assistant document lookup request", rf"{_ACTION_QUESTION}(?:list|show|find|search|check|read|open)\b.{{0,80}}\b(?:my\s+|the\s+|saved\s+)?(?:documents?|docs?)\b"),
+        ("documents", "document contents question", r"\bwhat(?:'s|\s+is|\s+are)\s+in\s+(?:my\s+|the\s+)?(?:documents?|docs?)\b"),
+        ("research", "research library lookup request", r"\b(?:what(?:'s|\s+is|\s+are)\s+in|(?:list|show|find|search|check|read|open)\b.{0,60})\s+(?:my\s+|the\s+)?(?:research\s+library|saved\s+research(?:\s+reports?)?|research\s+reports?)\b"),
+        ("memory", "personal knowledge base lookup request", r"\b(?:what(?:'s|\s+is|\s+are)\s+in|(?:list|show|find|search|check|read)\b.{0,60})\s+(?:my\s+|the\s+)?(?:personal\s+)?(?:knowledge\s+base|memor(?:y|ies))\b"),
+        ("library", "personal library lookup request", r"\b(?:what(?:'s|\s+is|\s+are)\s+in|(?:list|show|check|browse)\b.{0,40})\s+(?:my\s+|the\s+)?library\b"),
+
         # Notes, todos, checklists, and reminders.
         ("notes", "reminder request", r"\bremind\s+me\b"),
         ("notes", "assistant note/todo action request", rf"{_ACTION_QUESTION}(?:add|create|make|take|jot|write\s+down|set)\b.{{0,120}}\b(?:note|todo|task|checklist|reminder)\b"),

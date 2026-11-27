@@ -23397,10 +23397,13 @@ async def stream_agent_loop(
             if _prompt_active_document is not None:
                 route_tools = {
                     "edit_document", "update_document", "suggest_document",
-                    "ask_user", "update_plan",
+                    "manage_documents", "ask_user", "update_plan",
                 }
             else:
-                route_tools = {"create_document", "ask_user", "update_plan"}
+                route_tools = {
+                    "create_document", "manage_documents",
+                    "ask_user", "update_plan",
+                }
         elif (_ody_notes_finetune_mode or notes_mode) and route_tools is not None:
             route_tools = {
                 "manage_notes", "manage_calendar", "manage_tasks",
