@@ -295,6 +295,15 @@ def _isolated_tmp_dir(cwd: str) -> str:
     return path
 
 
+def _replace_tmp_paths(content: str, cwd: str) -> str:
+    """Redirect absolute /tmp tokens without rewriting longer path suffixes."""
+    pattern = r"(^|[\s'\"=:(\[,])/tmp/"
+    if not re.search(pattern, content):
+        return content
+    isolated_tmp = _isolated_tmp_dir(cwd).rstrip("/") + "/"
+    return re.sub(pattern, lambda match: match.group(1) + isolated_tmp, content)
+
+
 def _execution_boundary(
     cwd: str, *, wall_clock_s: int = DEFAULT_BASH_TIMEOUT,
 ) -> "containment.ContainmentProbe":
@@ -657,9 +666,7 @@ class BashTool:
                 ),
                 "exit_code": 1,
             }
-        if "/tmp/" in content:
-            isolated_tmp = _isolated_tmp_dir(agent_cwd())
-            content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
+        content = _replace_tmp_paths(content, agent_cwd())
         return await _run_owned_command(content, ctx, tool="bash", timeout=DEFAULT_BASH_TIMEOUT)
 
 class HostShellTool:
@@ -934,9 +941,7 @@ class PythonTool:
             require_launch("python", cwd=agent_cwd(), content=content)
         except ResourceIdentityError as error:
             return {"error": str(error), "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied"}
-        if "/tmp/" in content:
-            isolated_tmp = _isolated_tmp_dir(agent_cwd())
-            content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
+        content = _replace_tmp_paths(content, agent_cwd())
         _subproc_env = ctx.get("subproc_env")
         content = _python_with_configured_import_paths(
             _python_with_visible_final_expression(content), _subproc_env
