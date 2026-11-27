@@ -40,7 +40,7 @@ from src.host_docker_access import (
     running_in_container,
 )
 from routes.cookbook_output import (
-    error_aware_output_tail, classify_dead_download,
+    error_aware_output_tail, classify_dead_download, diagnose_task_output,
     HF_CACHE_COMPLETE_PROBE, HF_CACHE_INCOMPLETE_PROBE,
 )
 from routes.cookbook.endpoint_registration import (
@@ -4200,11 +4200,21 @@ def setup_cookbook_routes() -> APIRouter:
             if phase_info.get("status") == "ready" and is_alive:
                 status = "ready"
             serve_phase = phase_info.get("phase", "")
-            diagnosis = _diagnose_serve_output(full_snapshot) if task_type == "serve" and full_snapshot else None
-            if diagnosis and status in {"running", "unknown", "stopped"} and phase_info.get("status") != "ready":
+            raw_serve_diag = _diagnose_serve_output(full_snapshot) if task_type == "serve" and full_snapshot else None
+            if raw_serve_diag and status in {"running", "unknown", "stopped"} and phase_info.get("status") != "ready":
                 status = "error"
-            if download_zero_files:
-                diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
+            task_cmd = _payload.get("_cmd") or ""
+            task_log_path = str(TMUX_LOG_DIR / f"{session_id}.log") if not remote else ""
+            diagnosis = diagnose_task_output(
+                task_type,
+                full_snapshot,
+                status=status,
+                exit_code=exit_code,
+                zero_files=download_zero_files,
+                cmd=task_cmd,
+                log_path=task_log_path,
+                base_diagnosis=raw_serve_diag,
+            )
             output_tail = error_aware_output_tail(full_snapshot, status)
 
             results.append({
@@ -4216,8 +4226,9 @@ def setup_cookbook_routes() -> APIRouter:
                 "phase": serve_phase,
                 "diagnosis": diagnosis,
                 "output_tail": output_tail,
+                "log_path": task_log_path,
                 "exit_code": exit_code,
-                "cmd": _payload.get("_cmd") or "",
+                "cmd": task_cmd,
                 "tps": phase_info.get("tps"),
                 "reqs": phase_info.get("reqs"),
                 "pct": phase_info.get("pct"),
@@ -4225,5 +4236,47 @@ def setup_cookbook_routes() -> APIRouter:
             })
 
         return {"tasks": results}
+
+
+    @router.get("/diagnostics/{session_id}", dependencies=[Depends(require_admin)])
+    def get_task_diagnostics(session_id: str):
+        """Return command, log path, output tail, and actionable next steps for a Cookbook job."""
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", session_id or ""):
+            raise HTTPException(400, "Invalid session ID")
+        log_file = (TMUX_LOG_DIR / f"{session_id}.log").resolve()
+        if TMUX_LOG_DIR.resolve() not in log_file.parents:
+            raise HTTPException(400, "Invalid log path")
+        run_file = (TMUX_LOG_DIR / f"{session_id}_run.sh").resolve()
+        cmd = ""
+        if run_file.is_file():
+            for line in run_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("ODYSSEUS_SERVE_CMD="):
+                    cmd = line.split("=", 1)[1].strip().strip("'")
+                    break
+        log_text = log_file.read_text(encoding="utf-8", errors="replace") if log_file.is_file() else ""
+        if not log_text and not run_file.is_file():
+            raise HTTPException(404, "Task logs not found")
+        task_type = (
+            "download"
+            if session_id.startswith("dl-")
+            else ("dependency" if session_id.startswith("dep-") else "serve")
+        )
+        base_diag = _diagnose_serve_output(log_text) if task_type == "serve" and log_text else None
+        diagnosis = diagnose_task_output(
+            task_type,
+            log_text,
+            status="error",
+            cmd=cmd,
+            log_path=str(log_file) if log_file.is_file() else "",
+            base_diagnosis=base_diag,
+        )
+        return {
+            "session_id": session_id,
+            "type": task_type,
+            "cmd": cmd,
+            "log_path": str(log_file) if log_file.is_file() else "",
+            "output_tail": error_aware_output_tail(log_text, "error"),
+            "diagnosis": diagnosis,
+        }
 
     return router
