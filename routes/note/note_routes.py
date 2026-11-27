@@ -103,6 +103,7 @@ class NoteCreate(BaseModel):
     gallery_id: Optional[str] = None
     repeat: Optional[str] = "none"
     sort_order: Optional[int] = None
+    calendar_event_uid: Optional[str] = None
 
 
 class NoteUpdate(BaseModel):
@@ -1072,6 +1073,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 gallery_id=body.gallery_id,
                 repeat=body.repeat or "none",
                 sort_order=body.sort_order if body.sort_order is not None else 0,
+                calendar_event_uid=body.calendar_event_uid,
             )
             _reserve_new_note_uploads(user, set(), note)
             _lease(leases, request, db, user, owner_name=user)
