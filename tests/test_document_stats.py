@@ -24,7 +24,7 @@ def _run_stats(expression: str):
         cwd=ROOT,
         check=True,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     return json.loads(result.stdout)
 

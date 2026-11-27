@@ -86,7 +86,7 @@ def test_enter_creates_unchecked_task_and_empty_enter_exits_cleanly():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

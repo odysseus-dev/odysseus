@@ -71,7 +71,7 @@ def test_model_picker_endpoint_grouping_logic_in_node():
 
     console.log(JSON.stringify({{ k0, k1, g0, g1, name0, name1 }}));
     """
-    proc = subprocess.run(["node", "-e", test_js], check=True, capture_output=True, text=True)
+    proc = subprocess.run(["node", "-e", test_js], check=True, capture_output=True, text=True, encoding="utf-8")
     res = json.loads(proc.stdout)
     assert res["k0"] != res["k1"]
     assert res["g0"] != res["g1"]

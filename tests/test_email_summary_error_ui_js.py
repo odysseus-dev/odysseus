@@ -41,7 +41,7 @@ def test_email_summary_renderer_ignores_untrusted_provider_error_text():
         ["node", "--input-type=module"],
         input=script,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         cwd=str(_REPO),
         timeout=30,
     )

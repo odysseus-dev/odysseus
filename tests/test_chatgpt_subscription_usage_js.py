@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="node not on PA
 
 def _run_node(script: str):
     proc = subprocess.run(
-        ["node", "--input-type=module"], input=script, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        ["node", "--input-type=module"], input=script, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())

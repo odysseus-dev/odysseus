@@ -53,4 +53,4 @@ pending = _convertDocxToRichText(); respond(); await pending;
 assert.equal(original.content, '<p>converted</p>');
 assert.equal(saves, 1);
 '''
-    subprocess.run(["node", "--input-type=module", "-e", script], check=True, capture_output=True, text=True)
+    subprocess.run(["node", "--input-type=module", "-e", script], check=True, capture_output=True, text=True, encoding="utf-8")

@@ -18,7 +18,7 @@ def run_node(body: str):
     )
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script], cwd=ROOT,
-        text=True, capture_output=True, check=True,
+        text=True, encoding="utf-8", capture_output=True, check=True,
     )
     return json.loads(result.stdout)
 
@@ -159,7 +159,7 @@ def test_transform_cursors_follow_edge_and_corner_screen_direction():
     )
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script], cwd=ROOT,
-        text=True, capture_output=True, check=True,
+        text=True, encoding="utf-8", capture_output=True, check=True,
     )
     assert json.loads(result.stdout) == {
         "right0": "ew-resize",
