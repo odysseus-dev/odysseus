@@ -615,6 +615,14 @@ class BashTool:
                 "error": "bash: command is required; no command was executed",
                 "exit_code": 1,
             }
+        from src.agent_runtime.path_policy import find_sensitive_shell_mutation
+        sensitive_reason = find_sensitive_shell_mutation(content, cwd=agent_cwd())
+        if sensitive_reason:
+            return {
+                "error": f"bash: refused mutating sensitive path ({sensitive_reason})",
+                "exit_code": 1,
+                "blocked": True,
+            }
         if re.search(r"(?:^|[;&|]\s*)sudo\b|^\s*sudo\b", content, re.IGNORECASE):
             return {
                 "error": "bash: sudo/privilege escalation is unavailable in agent execution",

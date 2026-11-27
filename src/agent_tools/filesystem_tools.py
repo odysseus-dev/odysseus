@@ -228,8 +228,11 @@ class EditFileTool:
             return {"error": "edit_file: new_string required", "exit_code": 1}
         if not isinstance(replace_all, bool):
             return {"error": "edit_file: replace_all must be a boolean", "exit_code": 1}
+        from src.agent_runtime.path_policy import check_sensitive_mutation_path
         try:
+            check_sensitive_mutation_path(raw_path)
             path = _resolve_tool_path(raw_path)
+            check_sensitive_mutation_path(path)
         except ValueError as e:
             return {"error": f"edit_file: {e}", "exit_code": 1}
         if old == new:
@@ -422,8 +425,11 @@ class WriteFileTool:
             return {"error": str(error), "exit_code": 1}
         if not raw_path:
             return {"error": "write_file: path required", "exit_code": 1}
+        from src.agent_runtime.path_policy import check_sensitive_mutation_path
         try:
+            check_sensitive_mutation_path(raw_path)
             path = _resolve_tool_path(raw_path)
+            check_sensitive_mutation_path(path)
         except ValueError as e:
             return {"error": f"write_file: {e}", "exit_code": 1}
         body = _unwrap_fenced_source_body(body, path)
@@ -575,8 +581,11 @@ class ApplyPatchTool:
             if not ops:
                 return {"error": "apply_patch: no file operations found", "exit_code": 1}
             prepared = []
+            from src.agent_runtime.path_policy import check_sensitive_mutation_path
             for op in ops:
+                check_sensitive_mutation_path(op["path"])
                 path = _resolve_tool_path(op["path"])
+                check_sensitive_mutation_path(path)
                 kind = op["kind"]
                 if kind == "add":
                     if os.path.exists(path):
