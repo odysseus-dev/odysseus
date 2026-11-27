@@ -14123,16 +14123,18 @@ function _setEditTabLabel(name) {
 }
 
 export function closeEditor(options = {}) {
-  try { document.body.classList.remove('ge-editor-open'); } catch (_) {}
-  _penTool.cancel();
-  try { window.__geEditorBridge && window.__geEditorBridge.stop(); } catch (_) {}
-  window.__geEditorBridge = null;
+  // Decide first: a refused close must leave the open editor untouched
+  // (body class, pen tool, agent bridge, session listeners).
   const force = options === true || options.force === true;
   const editorMounted = _galleryEditMounted();
   if ((state.editorOpen || editorMounted) && !force && !window.__galleryAllowCloseEditor) {
     try { uiModule.showToast('Close the edit tab first'); } catch {}
     return false;
   }
+  try { document.body.classList.remove('ge-editor-open'); } catch (_) {}
+  _penTool.cancel();
+  try { window.__geEditorBridge && window.__geEditorBridge.stop(); } catch (_) {}
+  window.__geEditorBridge = null;
   _activeFilterPrompt?.cancel();
   if (_textEditor?.isOpen()) _textEditor.close(true);
   // Flush any pending debounced persist + fire one final save so closing

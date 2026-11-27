@@ -134,3 +134,60 @@ test('Escape still cancels crop, transform and lasso after reopening the editor'
     return { lassoActive: current.lassoActive, lassoPoints: current.lassoPoints };
   }).toEqual({ lassoActive: false, lassoPoints: 0 });
 });
+
+test('a refused close leaves the open editor untouched', async ({ page }) => {
+  await trackGlobalListeners(page);
+  await openBlankEditor(page, { width: 320, height: 240 }, 'Refused close');
+
+  // Leave a pen path in progress so the test can tell whether closeEditor
+  // cancelled it before deciding it was not allowed to close.
+  await selectTool(page, 'pen');
+  const box = await page.locator('.ge-main-canvas').boundingBox();
+  for (const [x, y] of [[40, 40], [200, 50], [150, 180]]) {
+    await page.mouse.click(box.x + x, box.y + y);
+  }
+
+  const snapshot = () => page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    return {
+      open: state.editorOpen,
+      bridge: !!window.__geEditorBridge,
+      bodyClass: document.body.classList.contains('ge-editor-open'),
+      listeners: window.__globalListenerCount(),
+    };
+  });
+  const before = await snapshot();
+  expect(before).toMatchObject({ open: true, bridge: true, bodyClass: true });
+
+  const result = await page.evaluate(async () => {
+    window.__galleryAllowCloseEditor = false;
+    const editor = await window.__photoEditorImport('/static/js/galleryEditor.js');
+    return editor.closeEditor();
+  });
+  expect(result).toBe(false);
+  expect(await snapshot()).toEqual(before);
+
+  // The pen path survived: Enter still closes it into a selection.
+  const hasSelection = () => page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    return !!state.wandMask;
+  });
+  expect(await hasSelection()).toBe(false);
+  await page.keyboard.press('Enter');
+  await expect.poll(hasSelection).toBe(true);
+
+  // Session listeners are still attached: Ctrl+K opens the palette.
+  await page.locator('.ge-main-canvas').click({ position: { x: 300, y: 220 } });
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+k');
+  await expect(page.locator('.ge-command-palette:not([hidden])')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+
+  // A forced close still tears everything down.
+  await closeEditor(page);
+  expect(await page.evaluate(() => ({
+    bridge: window.__geEditorBridge,
+    bodyClass: document.body.classList.contains('ge-editor-open'),
+    palettes: document.querySelectorAll('.ge-command-palette').length,
+  }))).toEqual({ bridge: null, bodyClass: false, palettes: 0 });
+});
