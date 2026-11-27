@@ -221,6 +221,7 @@ const ADV_KEYS = [
   { key: 'userBubbleBg',       css: '--user-bubble-bg',    label: 'User Chat Bubble', group: 'Chat Bubbles' },
   { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
   { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
+  { key: 'modelNameColor',     css: '--model-name-color',  label: 'Model Name',       group: 'Chat Bubbles' },
   { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
   { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
   { key: 'brandMixTo',         css: '--brand-mix-to',      label: 'Logo Gradient End', group: 'Sidebar' },
@@ -231,6 +232,24 @@ const ADV_KEYS = [
   { key: 'sendBtnHover',       css: '--send-btn-hover',    label: 'Send Hover',       group: 'Chat Input / Prompt Area' },
   { key: 'codeBg',             css: '--code-bg',           label: 'Code Bg',          group: 'Code Blocks' },
   { key: 'codeFg',             css: '--code-fg',           label: 'Code Text',        group: 'Code Blocks' },
+  { key: 'markdownHeading1',   css: '--md-heading-1',      label: 'Heading 1',        group: 'Markdown' },
+  { key: 'markdownHeading2',   css: '--md-heading-2',      label: 'Heading 2',        group: 'Markdown' },
+  { key: 'markdownHeading3',   css: '--md-heading-3',      label: 'Heading 3',        group: 'Markdown' },
+  { key: 'markdownHeading4',   css: '--md-heading-4',      label: 'Heading 4',        group: 'Markdown' },
+  { key: 'markdownHeading5',   css: '--md-heading-5',      label: 'Heading 5',        group: 'Markdown' },
+  { key: 'markdownHeading6',   css: '--md-heading-6',      label: 'Heading 6',        group: 'Markdown' },
+  { key: 'markdownBold',      css: '--md-bold',           label: 'Bold',             group: 'Markdown' },
+  { key: 'markdownItalic',    css: '--md-italic',         label: 'Italic',           group: 'Markdown' },
+  { key: 'markdownBoldItalic', css: '--md-bold-italic',    label: 'Bold + Italic',    group: 'Markdown' },
+  { key: 'markdownStrikethrough', css: '--md-strikethrough', label: 'Strikethrough', group: 'Markdown' },
+  { key: 'markdownInlineCode', css: '--md-inline-code',    label: 'Inline Code',      group: 'Markdown' },
+  { key: 'markdownQuoteText', css: '--md-quote-text',      label: 'Blockquote Text',  group: 'Markdown' },
+  { key: 'markdownQuoteBorder', css: '--md-quote-border',  label: 'Blockquote Border', group: 'Markdown' },
+  { key: 'markdownRule',      css: '--md-rule',           label: 'Horizontal Rule',  group: 'Markdown' },
+  { key: 'markdownListMarker', css: '--md-list-marker',    label: 'List Marker',      group: 'Markdown' },
+  { key: 'markdownLink',      css: '--md-link',           label: 'Link',             group: 'Markdown' },
+  { key: 'markdownLinkUnderline', css: '--md-link-underline', label: 'Link Underline', group: 'Markdown' },
+  { key: 'markdownTableHeader', css: '--md-table-header',  label: 'Table Header',     group: 'Markdown' },
   { key: 'toggleActive',       css: '--toggle-active',     label: 'Toggle On',        group: 'Controls' },
 ];
 
@@ -251,6 +270,24 @@ function computeAdvancedDefaults(colors) {
     sendBtnHover: red,
     codeBg: syn.bg,
     codeFg: syn.fg,
+    markdownHeading1: syn.keyword,
+    markdownHeading2: syn.function,
+    markdownHeading3: syn.string,
+    markdownHeading4: syn.builtin,
+    markdownHeading5: syn.variable,
+    markdownHeading6: syn.number,
+    markdownBold: syn.builtin,
+    markdownItalic: syn.params,
+    markdownBoldItalic: syn.keyword,
+    markdownStrikethrough: colors.fg,
+    markdownInlineCode: syn.string,
+    markdownQuoteText: colors.fg,
+    markdownQuoteBorder: syn.function,
+    markdownRule: colors.border,
+    markdownListMarker: syn.function,
+    markdownLink: syn.function,
+    markdownLinkUnderline: syn.function,
+    markdownTableHeader: syn.keyword,
     toggleActive: red,
   };
 }
@@ -292,6 +329,31 @@ function generateHarmonyColors(accentHex, harmonyType, mode) {
   };
 }
 
+function computeHarmonyMarkdownColors(colors) {
+  const syn = deriveSyntaxColors(colors);
+
+  return {
+    markdownHeading1: colors.red,
+    markdownHeading2: colors.red,
+    markdownHeading3: colors.red,
+    markdownHeading4: colors.red,
+    markdownHeading5: colors.red,
+    markdownHeading6: colors.red,
+    markdownBold: colors.fg,
+    markdownItalic: colors.fg,
+    markdownBoldItalic: colors.fg,
+    markdownStrikethrough: colors.fg,
+    markdownInlineCode: colors.red,
+    markdownQuoteText: colors.fg,
+    markdownQuoteBorder: colors.border,
+    markdownRule: colors.border,
+    markdownListMarker: colors.red,
+    markdownLink: syn.function,
+    markdownLinkUnderline: syn.function,
+    markdownTableHeader: colors.red,
+  };
+}
+
 export function applyColors(colors) {
   const s = document.documentElement.style;
   s.setProperty('--bg', colors.bg);
@@ -322,9 +384,15 @@ export function applyColors(colors) {
   const adv = colors.advanced || {};
   const defaults = computeAdvancedDefaults(colors);
   for (const { key, css } of ADV_KEYS) {
+    if (key === 'modelNameColor') continue;
     s.setProperty(css, adv[key] || defaults[key]);
   }
 
+  if (adv.modelNameColor) {
+    s.setProperty('--model-name-color', adv.modelNameColor);
+  } else {
+    s.removeProperty('--model-name-color');
+  }
   // Update favicon to match theme accent color
   _updateFavicon(colors.red || '#e06c75');
 }
@@ -572,8 +640,15 @@ function syncAdvancedPickers(colors) {
   const adv = colors.advanced || {};
   const defaults = computeAdvancedDefaults(colors);
   for (const { key } of ADV_KEYS) {
+    if (key === 'modelNameColor') continue;
     const el = document.getElementById('adv-' + key);
     if (el) el.value = adv[key] || defaults[key];
+  }
+
+  const modelNameElement = document.getElementById('adv-modelNameColor');
+  if (modelNameElement) {
+    modelNameElement.value = adv.modelNameColor || colors.red;
+    modelNameElement.dataset.hasOverride = adv.modelNameColor ? 'true' : 'false';
   }
 }
 
@@ -840,6 +915,14 @@ export function initThemeUI() {
     document.querySelectorAll('.color-reset-btn[data-reset-adv]').forEach(btn => {
       const key = btn.dataset.resetAdv;
       const picker = document.getElementById('adv-' + key);
+      if (key === 'modelNameColor') {
+        const refOverride = refColors.advanced && refColors.advanced.modelNameColor;
+        const hasOverride = picker && picker.dataset.hasOverride === 'true';
+        const changed = hasOverride !== Boolean(refOverride) ||
+          (Boolean(refOverride) && picker.value.toLowerCase() !== refOverride.toLowerCase());
+        btn.classList.toggle('changed', changed);
+        return;
+      }
       const ref = refDefaults[key] || '';
       if (picker && ref) {
         btn.classList.toggle('changed', picker.value.toLowerCase() !== ref.toLowerCase());
@@ -913,6 +996,17 @@ export function initThemeUI() {
       for (const { key } of ADV_KEYS) {
         const pEl = document.getElementById('adv-' + key);
         if (!pEl) continue;
+
+        if (key === 'modelNameColor') {
+          if (pEl.dataset.hasOverride === 'true') {
+            _adv[key] = pEl.value;
+            _hasAdv = true;
+          } else {
+            pEl.value = colors.red;
+          }
+          continue;
+        }
+
         if (_norm(pEl.value) !== _norm(_oldDefaults[key])) {
           _adv[key] = pEl.value;
           _hasAdv = true;
@@ -972,6 +1066,13 @@ export function initThemeUI() {
       let hasAdv = false;
       for (const { key } of ADV_KEYS) {
         const el = document.getElementById('adv-' + key);
+        if (key === 'modelNameColor') {
+          if (el && el.dataset.hasOverride === 'true') {
+            adv[key] = el.value;
+            hasAdv = true;
+          }
+          continue;
+        }
         if (el && el.value !== defaults[key]) { adv[key] = el.value; hasAdv = true; }
       }
       if (hasAdv) colors.advanced = adv;
@@ -1057,6 +1158,15 @@ export function initThemeUI() {
       // Skip empty or never-populated inputs so we don't accidentally store
       // them as overrides (and then write '#000000' to the CSS var).
       if (!v || !/^#[0-9a-f]{6}$/.test(v)) continue;
+
+      if (key === 'modelNameColor') {
+        if (el.dataset.hasOverride === 'true') {
+          adv[key] = el.value;
+          hasOverrides = true;
+        }
+        continue;
+      }
+
       if (v !== (defaults[key] || '').toLowerCase()) {
         adv[key] = el.value;
         hasOverrides = true;
@@ -1070,6 +1180,10 @@ export function initThemeUI() {
     if (!el || el.dataset.themeBound === '1') continue;
     el.dataset.themeBound = '1';
     el.addEventListener('input', () => {
+      if (key === 'modelNameColor' && el.dataset.resetting !== 'true') {
+        el.dataset.hasOverride = 'true';
+      }
+
       const base = readCurrentColors();
       base.advanced = readAdvanced();
       applyColors(base);
@@ -1108,6 +1222,13 @@ export function initThemeUI() {
       applyColors(base);
       _saveFull('custom', base);
       syncAdvancedPickers(base);
+      const modelPicker = document.getElementById('adv-modelNameColor');
+      if (modelPicker) {
+        modelPicker.dataset.resetting = 'true';
+        modelPicker.dataset.hasOverride = 'false';
+        modelPicker.value = base.red;
+        delete modelPicker.dataset.resetting;
+      }
       syncResetButtons();
     });
   }
@@ -1149,6 +1270,19 @@ export function initThemeUI() {
       const key = newBtn.dataset.resetAdv;
       const picker = document.getElementById('adv-' + key);
       if (picker) {
+        if (key === 'modelNameColor') {
+          const refOverride = refColors.advanced && refColors.advanced.modelNameColor;
+
+          picker.dataset.resetting = 'true';
+          picker.dataset.hasOverride = refOverride ? 'true' : 'false';
+          picker.value = refOverride || refColors.red;
+
+          picker.dispatchEvent(new Event('input'));
+
+          delete picker.dataset.resetting;
+          return;
+        }
+
         picker.value = refDefaults[key] || computeAdvancedDefaults(refColors)[key];
         picker.dispatchEvent(new Event('input'));
       }
@@ -1298,6 +1432,12 @@ export function initThemeUI() {
       const type = document.getElementById('harmony-type').value;
       const mode = document.getElementById('harmony-mode').value;
       const colors = generateHarmonyColors(accent, type, mode);
+      const advanced = {};
+      const generatedMarkdownColors = computeHarmonyMarkdownColors(colors);
+      for (const { key, group } of ADV_KEYS) {
+        if (group === 'Markdown') advanced[key] = generatedMarkdownColors[key];
+      }
+      if (Object.keys(advanced).length) colors.advanced = advanced;
       applyColors(colors);
       syncPickers(colors);
       _saveFull('custom', colors);

@@ -1157,8 +1157,8 @@ export function applyModelColor(roleEl, modelName) {
   if (!modelName) return;
   const color = modelColor(modelName);
   if (color) {
-    roleEl.style.color = color;
-    roleEl.style.setProperty('--model-dot', color);
+    roleEl.style.color = `var(--model-name-color, ${color})`;
+    roleEl.style.setProperty('--model-dot', 'var(--model-name-color, ' + color + ')');
   }
   // Replace generic dot with provider logo if available
   const logo = providerLogo(modelName);

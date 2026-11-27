@@ -116,48 +116,48 @@ button.hamburger {
 .msg h1 {
   font-size: 1.15em;
   font-weight: 700;
-  color: var(--hl-keyword, #c678dd);
+  color: var(--md-heading-1, var(--hl-keyword, #c678dd));
 }
 
 .msg h2 {
   font-size: 1.1em;
   font-weight: 600;
-  color: var(--hl-function, #5b8def);
+  color: var(--md-heading-2, var(--hl-function, #5b8def));
 }
 
 .msg h3 {
   font-size: 1.05em;
   font-weight: 600;
-  color: var(--hl-string, #98c379);
+  color: var(--md-heading-3, var(--hl-string, #98c379));
 }
 
 .msg h4 {
   font-size: 1.02em;
   font-weight: 600;
-  color: var(--hl-builtin, #e5c07b);
+  color: var(--md-heading-4, var(--hl-builtin, #e5c07b));
 }
 
 .msg h5 {
   font-size: 1em;
   font-weight: 600;
-  color: var(--hl-variable, #61afef);
+  color: var(--md-heading-5, var(--hl-variable, #61afef));
 }
 
 .msg h6 {
   font-size: 0.95em;
   font-weight: 600;
-  color: var(--hl-number, #d19a66);
+  color: var(--md-heading-6, var(--hl-number, #d19a66));
 }
 
 /* Bold text — subtle accent color */
 .msg strong, .msg b {
-  color: var(--hl-builtin, #e5c07b);
+  color: var(--md-bold, var(--hl-builtin, #e5c07b));
   font-weight: 600;
 }
 
 /* Italic — softer highlight */
 .msg em, .msg i {
-  color: var(--hl-params, #abb2bf);
+  color: var(--md-italic, var(--hl-params, #abb2bf));
   font-style: italic;
 }
 
@@ -166,18 +166,18 @@ button.hamburger {
 .msg b i, .msg i b,
 .msg b em, .msg em b,
 .msg strong i, .msg i strong {
-  color: var(--hl-keyword, #c678dd);
+  color: var(--md-bold-italic, var(--hl-keyword, #c678dd));
 }
 
 /* Strikethrough */
 .msg del {
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  color: color-mix(in srgb, var(--md-strikethrough, var(--fg)) 45%, transparent);
   text-decoration: line-through;
 }
 
 /* Inline code */
 .msg code:not(pre code) {
-  color: var(--hl-string, #98c379);
+  color: var(--md-inline-code, var(--hl-string, #98c379));
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   padding: 1px 5px;
   border-radius: 4px;
@@ -186,10 +186,10 @@ button.hamburger {
 
 /* Blockquotes */
 .msg blockquote {
-  border-left: 3px solid var(--hl-function, #5b8def);
+  border-left: 3px solid var(--md-quote-border, var(--hl-function, #5b8def));
   padding: 4px 12px;
   margin: 0.5em 0;
-  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  color: color-mix(in srgb, var(--md-quote-text, var(--fg)) 75%, transparent);
   background: var(--bg);
   border-radius: 0 6px 6px 0;
 }
@@ -199,7 +199,7 @@ button.hamburger {
 .msg hr {
   border: none;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border), transparent);
+  background: linear-gradient(90deg, transparent, var(--md-rule, var(--border)), transparent);
   margin: 0.8em 0;
 }
 
@@ -212,18 +212,18 @@ button.hamburger {
   margin: 0.15em 0;
 }
 .msg li::marker {
-  color: var(--hl-function, #5b8def);
+  color: var(--md-list-marker, var(--hl-function, #5b8def));
 }
 
 /* Links */
 .msg a {
-  color: var(--hl-function, #5b8def);
+  color: var(--md-link, var(--hl-function, #5b8def));
   text-decoration: none;
-  border-bottom: 1px solid rgba(91, 141, 239, 0.3);
+  border-bottom: 1px solid color-mix(in srgb, var(--md-link-underline, #5b8def) 30%, transparent);
   transition: border-color 0.15s;
 }
 .msg a:hover {
-  border-bottom-color: var(--hl-function, #5b8def);
+  border-bottom-color: var(--md-link, var(--hl-function, #5b8def));
 }
 .msg a.is-loading {
   opacity: 0.65;
@@ -246,7 +246,7 @@ button.hamburger {
 }
 .msg th {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
-  color: var(--hl-keyword, #c678dd);
+  color: var(--md-table-header, var(--hl-keyword, #c678dd));
   font-weight: 600;
   padding: 6px 12px;
   border: 1px solid var(--border);
