@@ -236,6 +236,7 @@ async def _bridge_post(bridge: Dict, path: str, payload: Dict, *, timeout_s: flo
         return {
             "error": f"{err_prefix}: invalid TUI host bridge",
             "exit_code": 1,
+            "executed": False,
         }
     target = _tui_host_bridge_endpoint_url(url, path)
     try:
@@ -367,6 +368,7 @@ def _text_write_to_binary_artifact_result(content: str) -> tuple[str, Dict] | No
             "Use Python or a format-specific creation tool, then inspect the result."
         ),
         "exit_code": 1,
+        "executed": False,
         "binary_artifact_preserved": True,
     }
 
@@ -376,7 +378,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
     from urllib.parse import urlparse
     bridge = _client_bridge(client_runtime_context)
     if bridge is None:
-        return tool, {"error": f"{tool}: TUI host bridge is not available", "exit_code": 1}
+        return tool, {"error": f"{tool}: TUI host bridge is not available", "exit_code": 1, "executed": False}
 
     url = str(bridge.get("url") or "").strip()
     parsed = urlparse(url)
@@ -471,7 +473,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             args = None
         if not isinstance(args, dict):
             return "grep: invalid arguments", {
-                "error": "grep: expected a JSON object", "exit_code": 1,
+                "error": "grep: expected a JSON object", "exit_code": 1, "executed": False,
             }
         pattern = args.get("pattern")
         path = args.get("path", ".")
@@ -488,7 +490,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         ):
             return "grep: invalid arguments", {
                 "error": "grep: invalid pattern, path, glob, ignore_case, or max_results",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         payload = {
             "pattern": pattern,
@@ -509,12 +511,12 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             except (TypeError, ValueError):
                 return f"{tool}: invalid arguments", {
                     "error": f"{tool}: expected JSON with an optional path",
-                    "exit_code": 1,
+                    "exit_code": 1, "executed": False,
                 }
             if not isinstance(args, dict):
                 return f"{tool}: invalid arguments", {
                     "error": f"{tool}: expected a JSON object",
-                    "exit_code": 1,
+                    "exit_code": 1, "executed": False,
                 }
             path_value = args.get("path", ".")
             offset = args.get("offset", 0)
@@ -536,7 +538,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         ):
             return f"{tool}: invalid arguments", {
                 "error": f"{tool}: path must be a string and ranges non-negative integers",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         path = path_value.strip() or "."
         return f"{tool}: {path[:80]}", await _bridge_post(
@@ -559,12 +561,12 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             except (TypeError, ValueError):
                 return f"{tool}: invalid arguments", {
                     "error": f"{tool}: expected JSON with pattern and optional path",
-                    "exit_code": 1,
+                    "exit_code": 1, "executed": False,
                 }
             if not isinstance(args, dict):
                 return f"{tool}: invalid arguments", {
                     "error": f"{tool}: expected a JSON object",
-                    "exit_code": 1,
+                    "exit_code": 1, "executed": False,
                 }
             pattern_value = args.get("pattern")
             path_value = args.get("path", ".")
@@ -582,7 +584,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         ):
             return f"{tool}: invalid arguments", {
                 "error": f"{tool}: pattern and path must be single-line strings",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         pattern = pattern_value.strip()
         path = path_value.strip() or "."
@@ -607,12 +609,12 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             except (TypeError, ValueError):
                 return "read_file: invalid arguments", {
                     "error": "read_file: expected JSON with a path",
-                    "exit_code": 1,
+                    "exit_code": 1, "executed": False,
                 }
             if not isinstance(args, dict):
                 return "read_file: invalid arguments", {
                     "error": "read_file: expected a JSON object",
-                    "exit_code": 1,
+                    "exit_code": 1, "executed": False,
                 }
             offset = args.get("offset", 0)
             limit = args.get("limit", 0)
@@ -626,7 +628,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             ):
                 return "read_file: invalid arguments", {
                     "error": "read_file: offset and limit must be non-negative integers",
-                    "exit_code": 1,
+                    "exit_code": 1, "executed": False,
                 }
             path_value = args.get("path")
             if (
@@ -637,7 +639,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             ):
                 return "read_file: invalid arguments", {
                     "error": "read_file: path must be a non-empty single-line string",
-                    "exit_code": 1,
+                    "exit_code": 1, "executed": False,
                 }
             payload = {
                 "path": path_value.strip(),
@@ -648,7 +650,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         if not path:
             return "read_file: invalid arguments", {
                 "error": "read_file: path is required",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         return f"read_file: {path[:80]}", await _bridge_post(
             bridge,
@@ -663,12 +665,12 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         except (TypeError, ValueError):
             return "edit_file: invalid arguments", {
                 "error": "edit_file: expected JSON with path, old_string, and new_string",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         if not isinstance(args, dict):
             return "edit_file: invalid arguments", {
                 "error": "edit_file: expected a JSON object",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         path_value = args.get("path")
         path = path_value.strip() if isinstance(path_value, str) else ""
@@ -680,27 +682,27 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         if not path:
             return "edit_file: invalid arguments", {
                 "error": "edit_file: path is required",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         if not isinstance(old_string, str) or not old_string:
             return "edit_file: invalid arguments", {
                 "error": "edit_file: old_string is required",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         if not isinstance(new_string, str):
             return "edit_file: invalid arguments", {
                 "error": "edit_file: new_string is required",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         if old_string == new_string:
             return "edit_file: invalid arguments", {
                 "error": "edit_file: old_string and new_string are identical",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         if not isinstance(replace_all, bool):
             return "edit_file: invalid arguments", {
                 "error": "edit_file: replace_all must be a boolean",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         return f"edit_file: {str(args.get('path') or '')[:80]}", await _bridge_post(
             bridge,
@@ -722,12 +724,12 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         except (TypeError, ValueError):
             return "write_file: invalid arguments", {
                 "error": "write_file: expected JSON with path and content",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         if not isinstance(args, dict):
             return "write_file: invalid arguments", {
                 "error": "write_file: expected a JSON object",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         path_value = args.get("path")
         path = path_value.strip() if isinstance(path_value, str) else ""
@@ -737,7 +739,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         if not isinstance(body_value, str):
             return "write_file: invalid arguments", {
                 "error": "write_file: content must be a string",
-                "exit_code": 1,
+                "exit_code": 1, "executed": False,
             }
         body = body_value
     else:
@@ -746,7 +748,7 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
     if not path or path.endswith(("/", "\\")):
         return "write_file: invalid arguments", {
             "error": "write_file: path is required",
-            "exit_code": 1,
+            "exit_code": 1, "executed": False,
         }
     rejected = _text_write_to_binary_artifact_result(content)
     if rejected is not None:
@@ -755,12 +757,12 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
     try:
         _, original_body, section, explicit_clear = _parse_write_intent(content)
     except ValueError as error:
-        return "write_file: invalid arguments", {"error": str(error), "exit_code": 1}
+        return "write_file: invalid arguments", {"error": str(error), "exit_code": 1, "executed": False}
     body = _unwrap_fenced_source_body(body, path)
     if not section or (not body.strip() and not explicit_clear):
         return "write_file: ambiguous content", {
             "error": "write_file: bridge cannot safely enforce implicit empty content; use explicit JSON string content",
-            "exit_code": 1,
+            "exit_code": 1, "executed": False,
         }
     return f"write_file: {path[:80]}", await _bridge_post(
         bridge,
@@ -1450,12 +1452,12 @@ async def _call_mcp_tool(
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     bound = active_backend_operation()
     if bound is not None and isinstance(bound.resource, NativeBackendResource):
-        return await _direct_fallback(tool, content, progress_cb=progress_cb, owner=owner) or {"error": f"Native tool '{tool}' unavailable", "exit_code": 1}
+        return await _direct_fallback(tool, content, progress_cb=progress_cb, owner=owner) or {"error": f"Native tool '{tool}' unavailable", "exit_code": 1, "executed": False}
     mcp = get_mcp_manager()
     if not mcp:
         if bound is not None:
             raise ResourceIdentityError("Pinned MCP backend is unavailable")
-        return await _direct_fallback(tool, content, progress_cb=progress_cb, owner=owner) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
+        return await _direct_fallback(tool, content, progress_cb=progress_cb, owner=owner) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1, "executed": False}
 
     server_id, tool_name = _MCP_TOOL_MAP[tool]
     qualified = f"mcp__{server_id}__{tool_name}"
@@ -1752,7 +1754,7 @@ async def execute_tool_block(
     if contract is not None and not contract.permits(getattr(block, "tool_type", "")):
         return f"{getattr(block, 'tool_type', '')}: BLOCKED", {
             "error": "Tool is outside the requested turn capabilities.",
-            "exit_code": 1, "failure_kind": "turn_contract_denied",
+            "exit_code": 1, "failure_kind": "turn_contract_denied", "executed": False,
         }
 
     transport = operation.transport_tool
@@ -1849,11 +1851,20 @@ async def execute_tool_block(
 
     approval_claimed = False
     if exact_approval is not None:
-        if (
-            not isinstance(security_context, ToolRunSecurityContext)
-            or not security_context.external_untrusted_context_seen
-            or not exact_approval.pending.external_untrusted_context_seen
-        ):
+        _armed_approval = bool(
+            isinstance(security_context, ToolRunSecurityContext)
+            and security_context.external_untrusted_context_seen
+            and exact_approval.pending.external_untrusted_context_seen
+        )
+        # A request-authority gap is approvable without untrusted context, but
+        # the card must have been shown under the run's current taint state.
+        _authority_gap_approval = bool(
+            isinstance(security_context, ToolRunSecurityContext)
+            and exact_approval.pending.authority_gap
+            and (exact_approval.pending.external_untrusted_context_seen
+                 or not security_context.external_untrusted_context_seen)
+        )
+        if not (_armed_approval or _authority_gap_approval):
             return (
                 f"{getattr(block, 'tool_type', None)}: BLOCKED",
                 {
@@ -2067,6 +2078,7 @@ async def _execute_tool_block_impl(
                         "```"
                     ),
                     "exit_code": 1,
+                    "executed": False,
                 }
                 return desc, result
         except (ValueError, TypeError):
@@ -2080,6 +2092,7 @@ async def _execute_tool_block_impl(
             "error": f"Tool '{tool}' is outside the requested turn capabilities.",
             "exit_code": 1,
             "failure_kind": "turn_contract_denied",
+            "executed": False,
         }
     # A turn contract narrows the offered tool inventory; it is not an
     # authorization grant overriding explicit execution-time restrictions.
@@ -2088,7 +2101,7 @@ async def _execute_tool_block_impl(
         and not policy_names.isdisjoint(disabled_tools)
     ):
         desc = f"{tool}: BLOCKED"
-        result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
+        result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1, "executed": False}
         logger.info(f"Tool blocked by user: {tool}")
         return desc, result
 
@@ -2100,13 +2113,14 @@ async def _execute_tool_block_impl(
         result = {
             "error": f"Execution of tool '{tool}' is forbade by the active guide-only policy.",
             "exit_code": 1,
+            "executed": False,
         }
         logger.warning("Tool policy blocked tool=%s", tool)
         return desc, result
 
     if tool in _ADMIN_TOOLS and not _owner_is_admin(owner):
         desc = f"{tool}: BLOCKED"
-        result = {"error": f"Tool '{tool}' requires an admin user.", "exit_code": 1}
+        result = {"error": f"Tool '{tool}' requires an admin user.", "exit_code": 1, "executed": False}
         logger.warning("Admin tool blocked for non-admin owner=%r tool=%s", owner, tool)
         return desc, result
 
@@ -2143,6 +2157,7 @@ async def _execute_tool_block_impl(
                 "Ask an admin to perform this action or grant the needed permission."
             ),
             "exit_code": 1,
+            "executed": False,
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
@@ -2167,7 +2182,7 @@ async def _execute_tool_block_impl(
                 if not section or (not body.strip() and not explicit_clear):
                     raise ValueError("write_file: bridge cannot safely enforce implicit empty content; use explicit JSON string content")
             except ValueError as error:
-                return "write_file: invalid arguments", {"error": str(error), "exit_code": 1}
+                return "write_file: invalid arguments", {"error": str(error), "exit_code": 1, "executed": False}
         try:
             return await dispatched(execution_bridge.route_tool(
                 tool,
@@ -2463,7 +2478,7 @@ async def _execute_tool_block_impl(
                             'e.g. {"uid": "..."} — got a JSON array/value instead.'
                         )
             if _args_error is not None:
-                result = {"error": _args_error, "exit_code": 1}
+                result = {"error": _args_error, "exit_code": 1, "executed": False}
             else:
                 args = dict(args)
                 args.pop(_EMAIL_MCP_OWNER_ARG, None)
@@ -2474,7 +2489,7 @@ async def _execute_tool_block_impl(
                     args[_EMAIL_MCP_SESSION_ARG] = session_id
                 result = await dispatched(mcp.call_tool(qualified, args))
         else:
-            result = {"error": "MCP manager not available", "exit_code": 1}
+            result = {"error": "MCP manager not available", "exit_code": 1, "executed": False}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
@@ -2482,7 +2497,7 @@ async def _execute_tool_block_impl(
             desc = f"mcp: {tool}"
             args, parse_error = _parse_qualified_mcp_args(tool, content)
             if parse_error:
-                result = {"error": parse_error, "exit_code": 1}
+                result = {"error": parse_error, "exit_code": 1, "executed": False}
             else:
                 args = dict(args)
                 args.pop("_odysseus_owner", None)
@@ -2500,7 +2515,7 @@ async def _execute_tool_block_impl(
                     _promote_image_fields(result)
         else:
             desc = f"mcp: {tool}"
-            result = {"error": "MCP manager not available", "exit_code": 1}
+            result = {"error": "MCP manager not available", "exit_code": 1, "executed": False}
 
 
     elif tool in dynamic_handlers:
@@ -2526,7 +2541,8 @@ async def _execute_tool_block_impl(
         desc = f"unknown: {tool}"
         result = {
             "error": f"Unknown tool: {tool}",
-            "exit_code": 1
+            "exit_code": 1,
+            "executed": False,
         }
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
@@ -2542,7 +2558,7 @@ _FORMATTER_HANDLED_KEYS = {
     "stdout", "stderr", "exit_code", "content", "size",
     "response", "results", "session_id", "name", "model", "session_name",
     "success", "path", "action", "title", "doc_id", "version", "applied",
-    "error", "output", "images",
+    "error", "output", "images", "executed",
 }
 
 

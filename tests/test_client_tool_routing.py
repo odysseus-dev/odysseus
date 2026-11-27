@@ -360,7 +360,7 @@ def test_routed_write_file_rejects_non_text_content_without_host_call():
         )
 
     assert desc == "write_file: invalid arguments"
-    assert result == {"error": "write_file: content must be a string", "exit_code": 1}
+    assert result == {"error": "write_file: content must be a string", "exit_code": 1, "executed": False}
     assert calls == []
 
 
@@ -679,7 +679,7 @@ def test_bridge_post_rejects_untrusted_url_without_network_call():
             )
         )
 
-    assert result == {"error": "bash: invalid TUI host bridge", "exit_code": 1}
+    assert result == {"error": "bash: invalid TUI host bridge", "exit_code": 1, "executed": False}
 
 
 def test_bridge_post_treats_empty_or_error_payload_as_failure():
