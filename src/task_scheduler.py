@@ -21,6 +21,34 @@ from src.task_action_policy import (
 logger = logging.getLogger(__name__)
 
 
+def _validate_task_session_owner(task, db, session_model, session_manager=None) -> bool:
+    """Prevent scheduled tasks from targeting another owner's session.
+
+    When a session exists in SQLite or the in-memory session manager, its
+    owner must exactly match the task's owner (including legacy ownerless
+    pairs). If no persisted session exists yet, allow creation/in-memory
+    manager delivery.
+    """
+    session_id = getattr(task, "session_id", None)
+    if not session_id:
+        return True
+
+    task_owner = getattr(task, "owner", None)
+    session = db.query(session_model).filter(
+        session_model.id == session_id
+    ).first()
+
+    if session is not None:
+        return getattr(session, "owner", None) == task_owner
+
+    if session_manager is not None and hasattr(session_manager, "get_session"):
+        mem_session = session_manager.get_session(session_id)
+        if mem_session is not None:
+            return getattr(mem_session, "owner", None) == task_owner
+
+    return True
+
+
 class TaskEndpointAuthorityError(RuntimeError):
     """A scheduled task's endpoint or its credentials cannot be authorized."""
 
@@ -1005,6 +1033,22 @@ class TaskScheduler:
                 db.commit()
                 return
 
+            from core.database import Session as DbSession
+            if not _validate_task_session_owner(task, db, DbSession, session_manager=getattr(self, '_session_manager', None)):
+                msg = "Scheduled task session ownership mismatch or missing session"
+                blocked = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if blocked:
+                    blocked.status = "error"
+                    blocked.result = msg
+                    blocked.error = msg
+                    blocked.finished_at = _utcnow()
+                task.status = "paused"
+                task.next_run = None
+                task.last_run = _utcnow()
+                logger.warning("Paused task %s: %s", task_id, msg)
+                db.commit()
+                return
+
             if gate_foreground:
                 waiting = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if waiting and waiting.status == "queued":
@@ -1886,6 +1930,11 @@ class TaskScheduler:
 
         endpoint_url = _normalize_chat_endpoint(endpoint_url)
 
+        if not _validate_task_session_owner(task, db, DbSession, session_manager=getattr(self, '_session_manager', None)):
+            raise RuntimeError(
+                "Scheduled task session ownership mismatch or missing session"
+            )
+
         session_id = task.session_id
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -2280,6 +2329,17 @@ class TaskScheduler:
         with bind_request_authority(authority):
             report = await researcher.research(task.prompt)
         completed_ts = time.time()
+
+        # A username migration can change task and session ownership while
+        # research is running. Reload ORM-mapped tasks before writing a report.
+        try:
+            db.refresh(task)
+        except Exception:
+            pass
+        if not _validate_task_session_owner(task, db, DbSession, session_manager=getattr(self, '_session_manager', None)):
+            raise RuntimeError(
+                "Scheduled research session ownership mismatch or missing session"
+            )
         try:
             stats = researcher.get_stats() or {}
         except Exception:
@@ -2393,6 +2453,12 @@ class TaskScheduler:
         doesn't recognise.
         """
         _require_task_owner(task.owner)
+        if not owner_has_admin_task_privileges(getattr(task, "owner", None)):
+            logger.warning(
+                "Task %s: MCP delivery denied for non-admin owner",
+                task.id,
+            )
+            return
         from src.tool_utils import get_mcp_manager
         mcp = get_mcp_manager()
         if not mcp:
