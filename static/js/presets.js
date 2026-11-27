@@ -247,7 +247,11 @@ function initNameDropdown() {
       try {
         // Delete saved template if exists
         if (match) {
-          await fetch(`${API_BASE}/api/presets/templates/${match.id}`, { method: 'DELETE' });
+          const response = await fetch(`${API_BASE}/api/presets/templates/${match.id}`, { method: 'DELETE' });
+          const result = await response.json();
+          if (!response.ok || result?.success !== true) {
+            throw new Error('Persona deletion was not committed');
+          }
         }
         // Hide built-in preset
         if (isBuiltin) {
@@ -268,7 +272,10 @@ function initNameDropdown() {
         select.value = '__default__';
         select.dispatchEvent(new Event('change'));
         setTimeout(() => { _syncCharIndicator(); }, 0);
-      } catch (e) { console.error('Delete character failed:', e); }
+      } catch (e) {
+        console.error('Delete character failed:', e);
+        window.uiModule.showError('Failed to delete persona');
+      }
     });
   }
 }
