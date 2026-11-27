@@ -44,6 +44,24 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, n))
 
 
+def _resolve_llm_timeout() -> int:
+    """Resolve ``research_llm_timeout_seconds`` with a crash-proof fallback.
+
+    Synthesis / final-report calls are non-streaming, so their whole
+    prefill + decode must fit inside this read timeout (#6986). The read is
+    guarded like the other research_* keys (#5049): a hand-edited
+    ``data/settings.json`` holding ``{"research_llm_timeout_seconds": "bogus"}``
+    must not kill every deep-research run.
+    """
+    from src.settings import get_setting
+    return _bounded_int(
+        get_setting("research_llm_timeout_seconds", 180),
+        default=180,
+        minimum=15,
+        maximum=3600,
+    )
+
+
 def _format_probe_failure(model: str, exc: Exception) -> str:
     """Turn a failed research model probe into a user-facing message."""
     detail = getattr(exc, "detail", None)
@@ -1041,6 +1059,7 @@ class ResearchHandler:
                 minimum=15,
                 maximum=3600,
             )
+            _llm_timeout = _resolve_llm_timeout()
 
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
@@ -1053,6 +1072,7 @@ class ResearchHandler:
                 extraction_timeout=_extraction_timeout,
                 planning_timeout=_planning_timeout,
                 query_timeout=_query_timeout,
+                llm_timeout=_llm_timeout,
                 extraction_concurrency=_extraction_concurrency,
                 progress_callback=progress_callback,
                 search_provider=search_provider,
