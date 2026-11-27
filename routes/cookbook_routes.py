@@ -306,6 +306,32 @@ def _remote_tmux_command(*args: str) -> str:
     return f'{_remote_posix_path_prefix()}{tmux}"$ODYSSEUS_TMUX" {quoted}'
 
 
+_TMUX_HISTORY_LIMIT = 100000
+
+
+def _tmux_new_session_command(tmux: str, session_id: str, command: str) -> str:
+    """Shell command that starts a detached tmux session with long scrollback.
+
+    tmux reads ``history-limit`` when it creates a pane, so the global value
+    has to be raised while ``new-session`` runs. It is saved and put back in
+    the same tmux command list, so the user's own tmux server keeps its
+    setting. A tmux too old for ``set-option -F`` rejects the whole list
+    before running any of it; the plain ``new-session`` after ``||`` then
+    starts the session with the default scrollback.
+    """
+    saved = "@odysseus_prev_history_limit"
+    sid = shlex.quote(str(session_id))
+    args = [
+        "set-option", "-gF", saved, "#{history-limit}", ";",
+        "set-option", "-g", "history-limit", str(_TMUX_HISTORY_LIMIT), ";",
+        "new-session", "-d", "-s", str(session_id), command, ";",
+        "set-option", "-gF", "history-limit", "#{" + saved + "}", ";",
+        "set-option", "-gu", saved,
+    ]
+    chained = " ".join(shlex.quote(arg) for arg in args)
+    return f"{tmux} {chained} || {tmux} new-session -d -s {sid} {shlex.quote(command)}"
+
+
 def _remote_tmux_launch_command(session_id: str, runner: str) -> str:
     """Shell command that chmods a runner and starts it in remote tmux."""
     tmux = (
@@ -316,14 +342,11 @@ def _remote_tmux_launch_command(session_id: str, runner: str) -> str:
         '|| true)"; '
         'if [ -z "$ODYSSEUS_TMUX" ]; then echo "tmux not found" >&2; exit 127; fi; '
     )
-    sid = shlex.quote(str(session_id))
     runner_q = shlex.quote(str(runner))
-    runner_exec = shlex.quote(f"./{runner}")
+    launch = _tmux_new_session_command('"$ODYSSEUS_TMUX"', session_id, f"./{runner}")
     return (
         f'{_remote_posix_path_prefix()}{tmux}'
-        f'chmod +x {runner_q} && '
-        f'"$ODYSSEUS_TMUX" set-option -g history-limit 100000 2>/dev/null; '
-        f'"$ODYSSEUS_TMUX" new-session -d -s {sid} {runner_exec}'
+        f'chmod +x {runner_q} && {{ {launch}; }}'
     )
 
 
@@ -1240,7 +1263,7 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 wrapper_script.chmod(0o755)
-            setup_cmd = None if IS_WINDOWS else f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
+            setup_cmd = None if IS_WINDOWS else _tmux_new_session_command("tmux", session_id, str(wrapper_script))
 
         logger.info(f"Model download: {req.repo_id} (backend={'ollama' if is_ollama_download else 'hf'}, include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
@@ -2362,7 +2385,7 @@ def setup_cookbook_routes() -> APIRouter:
                     f"ssh {_pf}{remote} {shlex.quote(_remote_tmux_launch_command(session_id, remote_runner))}"
                 )
             else:
-                setup_cmd = f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
+                setup_cmd = _tmux_new_session_command("tmux", session_id, str(runner_path))
 
         if setup_cmd is None:
             # LOCAL Windows: launch the bash runner detached; no tmux setup_cmd.
