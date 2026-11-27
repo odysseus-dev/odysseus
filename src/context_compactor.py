@@ -477,7 +477,10 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     protected_msgs = []
     convo_msgs = []
     for msg in messages:
-        if msg.get("_protected"):
+        if msg.get("_protected") or (
+            msg.get("role") in ("user", "system")
+            and (msg.get("metadata") or {}).get("research_spinoff_from")
+        ):
             protected_msgs.append(msg)
         elif msg.get("role") == "system":
             system_msgs.append(msg)

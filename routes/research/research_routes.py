@@ -761,7 +761,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         Reads the persisted research result + sources for `session_id`, creates
         a fresh session (inheriting endpoint/model/headers from the source
         session if available, otherwise from the resolved chat endpoint), and
-        injects a single system message containing the report and sources so
+        injects a guarded user-role context message containing the report so
         the user can ask follow-up questions in a clean conversation.
         """
         user = _require_user(request)
@@ -863,26 +863,32 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         except Exception:
             logger.debug("session_created event dispatch failed", exc_info=True)
 
-        # Build the priming system message — report only, no sources injected.
+        # Build the priming context message -- report only, no sources injected.
         # The user can open the visual report for source details; keeping sources
         # out of the chat context saves tokens and avoids the AI fabricating
-        # citations.
+        # citations. Wrap in untrusted_context_message so crawled report text
+        # stays in a guarded user-role message rather than trusted system role.
+        from src.prompt_security import untrusted_context_message
+
         date_str = datetime.utcnow().strftime("%Y-%m-%d")
         primer = (
-            f"[Research context — {date_str}]\n\n"
-            f"The user previously ran a deep research investigation. Use the "
-            f"report below as your primary knowledge base when answering "
-            f"follow-up questions. If the user asks something not covered, "
-            f"say so plainly rather than guessing.\n\n"
+            f"[Research context ? {date_str}]\n\n"
             f"=== ORIGINAL QUERY ===\n{query or '(not recorded)'}\n\n"
             f"=== REPORT ===\n{result}"
         )
+        msg = untrusted_context_message(
+            "research report",
+            primer,
+            provenance_origin=f"research:{session_id}",
+        )
+        msg_metadata = dict(msg.get("metadata") or {})
+        msg_metadata["research_spinoff_from"] = session_id
 
         from core.models import ChatMessage
         new_sess.add_message(ChatMessage(
-            role="system",
-            content=primer,
-            metadata={"research_spinoff_from": session_id},
+            role=msg["role"],
+            content=msg["content"],
+            metadata=msg_metadata,
         ))
         session_manager.save_sessions()
 

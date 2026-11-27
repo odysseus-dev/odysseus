@@ -632,8 +632,16 @@ def test_non_spinoff_plain_session_is_false():
     assert _session_is_research_spinoff(sess) is False
 
 
-def test_metadata_on_non_system_message_ignored():
-    sess = SimpleNamespace(history=[_SpinMsg("user", {"research_spinoff_from": "rp-3"})])
+def test_spinoff_detected_from_guarded_user_primer():
+    sess = SimpleNamespace(history=[_SpinMsg("user", {"research_spinoff_from": "rp-3", "trusted": False})])
+    assert _session_is_research_spinoff(sess) is True
+
+
+def test_metadata_on_assistant_or_tool_message_ignored():
+    sess = SimpleNamespace(history=[
+        _SpinMsg("assistant", {"research_spinoff_from": "rp-3"}),
+        _SpinMsg("tool", {"research_spinoff_from": "rp-4"}),
+    ])
     assert _session_is_research_spinoff(sess) is False
 
 
