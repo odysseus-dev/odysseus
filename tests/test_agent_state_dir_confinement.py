@@ -96,7 +96,7 @@ def test_valid_resource_authority_cannot_open_unknown_state(tmp_path, monkeypatc
         security_context=execution.NO_TOOL_SECURITY_CONTEXT,
     ))
     assert result["failure_kind"] == "resource_identity_denied"
-    assert secret.read_text() == "UNKNOWN_STATE_SECRET"
+    assert secret.read_text(encoding="utf-8") == "UNKNOWN_STATE_SECRET"
 
 
 def test_public_upload_carveout_never_reopens_publication_manifest(tmp_path, monkeypatch):
@@ -238,13 +238,13 @@ def test_native_file_tools_hide_control_plane_hardlink_alias(tmp_path, monkeypat
         importlib.import_module("src.tool_execution")._resolve_tool_path(str(alias))
 
     ls_result = asyncio.run(LsTool().execute(
-        f'{{"path": "{workspace}"}}', {}
+        f'{{"path": {json.dumps(str(workspace))}}}', {}
     ))
     glob_result = asyncio.run(GlobTool().execute(
-        f'{{"pattern": "**/*", "path": "{workspace}"}}', {}
+        f'{{"pattern": "**/*", "path": {json.dumps(str(workspace))}}}', {}
     ))
     grep_result = asyncio.run(GrepTool().execute(
-        f'{{"pattern": "LIVE_ADMIN_SESSION", "path": "{workspace}"}}', {}
+        f'{{"pattern": "LIVE_ADMIN_SESSION", "path": {json.dumps(str(workspace))}}}', {}
     ))
     assert "notes.txt" not in ls_result["output"]
     assert "notes.txt" not in glob_result["output"]
@@ -623,10 +623,10 @@ def test_recursive_glob_and_grep_hide_state_from_extra_root(tmp_path, monkeypatc
     monkeypatch.setattr("src.settings.get_setting", lambda *_a, **_k: [str(tmp_path)])
 
     glob_result = asyncio.run(GlobTool().execute(
-        f'{{"pattern": "**/*", "path": "{tmp_path}"}}', {}
+        f'{{"pattern": "**/*", "path": {json.dumps(str(tmp_path))}}}', {}
     ))
     grep_result = asyncio.run(GrepTool().execute(
-        f'{{"pattern": "TOKEN", "path": "{tmp_path}"}}', {}
+        f'{{"pattern": "TOKEN", "path": {json.dumps(str(tmp_path))}}}', {}
     ))
 
     assert "public.txt" in glob_result["output"]
@@ -754,7 +754,7 @@ def test_ls_hides_protected_entries_when_root_contains_data(
     else:
         monkeypatch.setattr("src.settings.get_setting", lambda *_a, **_k: [str(tmp_path)])
         context = nullcontext()
-        content = f'{{"path": "{tmp_path}"}}'
+        content = f'{{"path": {json.dumps(str(tmp_path))}}}'
 
     with context:
         result = asyncio.run(LsTool().execute(content, {}))
