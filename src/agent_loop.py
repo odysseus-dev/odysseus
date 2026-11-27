@@ -8389,6 +8389,47 @@ def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
     return keys
 
 
+def _resolve_endpoint_stream_timeout(
+    endpoint_url: str,
+    owner: Optional[str] = None,
+) -> Optional[int]:
+    """Per-endpoint LLM stream timeout override (ModelEndpoint.stream_timeout_seconds),
+    or None if unset/unresolvable — caller falls back to the global setting."""
+    try:
+        from core.database import SessionLocal as _SL, ModelEndpoint as _ME
+
+        db = _SL()
+        try:
+            for key in _endpoint_lookup_keys(endpoint_url):
+                query = db.query(_ME).filter(_ME.base_url == key)
+                if owner:
+                    from src.auth_helpers import owner_filter
+
+                    query = owner_filter(query, _ME, owner)
+                ep = query.first()
+                if ep is not None:
+                    return getattr(ep, "stream_timeout_seconds", None)
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return None
+
+
+def resolve_stream_timeout(endpoint_url: str, owner: Optional[str] = None) -> int:
+    """Single source of truth for the LLM stream read-timeout: the target
+    ModelEndpoint's stream_timeout_seconds if set, else the global
+    agent_stream_timeout_seconds setting. Every caller of
+    stream_llm(_with_fallback) for a model completion should route through
+    this instead of reading get_setting("agent_stream_timeout_seconds", ...)
+    directly, so a new per-endpoint override applies everywhere without
+    touching each call site."""
+    endpoint_override = _resolve_endpoint_stream_timeout(endpoint_url, owner)
+    if endpoint_override:
+        return int(endpoint_override)
+    return int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+
+
 def _agent_route_tool_mode(
     endpoint_url: str,
     model: str,
@@ -22450,7 +22491,7 @@ async def stream_agent_loop(
                 max_tokens=min(max_tokens or 128, 128),
                 prompt_type=None,
                 tools=None,
-                timeout=int(get_setting("agent_stream_timeout_seconds", 300) or 300),
+                timeout=resolve_stream_timeout(endpoint_url, owner),
                 session_id=session_id,
                 workload=workload,
                 thinking_mode=thinking_mode,
@@ -26381,7 +26422,7 @@ async def stream_agent_loop(
                 if _route_state.get("spec_offered")
                 else set(turn_contract.offered)
             )
-        agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+        agent_stream_timeout = resolve_stream_timeout(endpoint_url, owner)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
         if round_num == 1:
