@@ -231,7 +231,7 @@ def kill_browser_tree(leader: int, *, settle_s: float = 1.0) -> tuple[list[int],
     # path is the agent-browser ``close`` command. This is the forced path.
     sweep = process_lifecycle.terminate_identities(
         [member.identity for member in ordered],
-        steps=((signal.SIGKILL, settle_s),), poll_s=0.02,
+        steps=((getattr(signal, "SIGKILL", signal.SIGTERM), settle_s),), poll_s=0.02,
     )
     survivors = [member.identity.pid for member in ordered
                  if member.identity.pid in sweep.survivors or member.identity.pid in sweep.unverified]
