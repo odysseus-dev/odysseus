@@ -39,6 +39,8 @@ import spinnerModule from './spinner.js';
 import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 
+const _serverConnectionTests = new WeakMap();
+
 // Map a serve-backend code (vllm / sglang / llamacpp / mlx) → the package name
 // the Dependencies API reports. Used to look up "is this backend installed
 // on the target server" before firing a launch.
@@ -2430,9 +2432,35 @@ export function _hwfitInit() {
     _persistEnvState();
   }
 
+  function _setServerPlatform(entry, platform) {
+    const value = selector => entry.querySelector(selector)?.value?.trim() || '';
+    const previous = {
+      name: value('.cookbook-srv-name'), host: value('.cookbook-srv-host'),
+      port: value('.cookbook-srv-port'), envPath: value('.cookbook-srv-path'),
+      platform: entry.dataset.platform || '',
+    };
+    const oldKey = _serverKey(previous);
+    const newKey = _serverKey({ ...previous, platform });
+    const selected = _serverByVal(_envState.remoteServerKey || _envState.remoteHost);
+    const isSelected = selected && _serverKey(selected) === oldKey;
+    entry.dataset.platform = platform;
+    // Platform is part of the existing profile key. Keep selection/defaults
+    // bound to this same profile when newly discovered metadata changes it.
+    if (_envState.remoteServerKey === oldKey) _envState.remoteServerKey = newKey;
+    if (_envState.defaultServer === oldKey) _envState.defaultServer = newKey;
+    if (isSelected) _envState.platform = platform;
+    _syncServers();
+    _rebuildServerSelect();
+  }
+
   async function _testServerConnection(entry) {
     const host = entry.querySelector('.cookbook-srv-host')?.value?.trim();
     const port = entry.querySelector('.cookbook-srv-port')?.value?.trim() || '';
+    const test = {};
+    _serverConnectionTests.set(entry, test);
+    const current = () => _serverConnectionTests.get(entry) === test && entry.isConnected
+      && entry.querySelector('.cookbook-srv-host')?.value?.trim() === host
+      && (entry.querySelector('.cookbook-srv-port')?.value?.trim() || '') === port;
     const dot = entry.querySelector('.cookbook-srv-status');
     const msg = entry.querySelector('.cookbook-srv-test-msg');
     const setMsg = (text, color = '') => {
@@ -2460,6 +2488,7 @@ export function _hwfitInit() {
         body: JSON.stringify({ host, ssh_port: port || undefined }),
       });
       const data = await res.json();
+      if (!current()) return;
       if (!res.ok) {
         throw new Error(data.detail || data.error || `HTTP ${res.status}`);
       }
@@ -2469,6 +2498,9 @@ export function _hwfitInit() {
         dot.className = 'cookbook-srv-status ok';
         dot.title = `Reachable · ${ms} ms · use Dependencies to check tmux/HF setup`;
         setMsg(`Connected · ${ms} ms`, 'var(--green,#50fa7b)');
+        if (['linux', 'windows', 'termux', 'darwin'].includes(data.platform)) {
+          _setServerPlatform(entry, data.platform);
+        }
       } else {
         dot.className = 'cookbook-srv-status fail';
         const err = (data.stderr || data.stdout || (data.exit_code == null ? 'no exit code' : `exit ${data.exit_code}`)).toString().trim().slice(0, 240);
@@ -2476,6 +2508,7 @@ export function _hwfitInit() {
         setMsg(`Failed · ${err}`, 'var(--red,#e06c75)');
       }
     } catch (e) {
+      if (!current()) return;
       dot.className = 'cookbook-srv-status fail';
       dot.title = `Test failed: ${e.message || e}`;
       setMsg(`Failed · ${e.message || e}`, 'var(--red,#e06c75)');
@@ -2646,6 +2679,7 @@ export function _hwfitInit() {
     _wireServerColorPicker(entry);
     entry.querySelectorAll('input, select').forEach(el => {
       el.addEventListener('change', () => {
+        if (el.matches('.cookbook-srv-host, .cookbook-srv-port')) entry.dataset.platform = '';
         const selectedBefore = _envState.remoteHost || '';
         const entryHost = entry.querySelector('.cookbook-srv-host')?.value?.trim() || '';
         const color = entry.querySelector('.cookbook-srv-color')?.value?.trim() || '';
