@@ -127,15 +127,17 @@ def cmd_albums(args):
 
 
 def cmd_search(args):
+    from src.session_search import escape_like_pattern
+
     db = SessionLocal()
     try:
-        like = f"%{args.query}%"
+        like = f"%{escape_like_pattern(args.query)}%"
         rows = db.query(GalleryImage).filter(
             GalleryImage.is_active == True,  # noqa: E712
         ).filter(
-            (GalleryImage.prompt.ilike(like)) |
-            (GalleryImage.tags.ilike(like)) |
-            (GalleryImage.ai_tags.ilike(like))
+            GalleryImage.prompt.ilike(like, escape="\\") |
+            GalleryImage.tags.ilike(like, escape="\\") |
+            GalleryImage.ai_tags.ilike(like, escape="\\")
         ).order_by(GalleryImage.created_at.desc()).limit(args.limit).all()
         emit([_serialize_image(i) for i in rows], args)
     finally:
