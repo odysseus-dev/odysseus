@@ -153,7 +153,7 @@ const PRECACHE = [
   '/static/js/document/ui/pdf/annotations.js',
   '/static/js/document/ui/pdf/geometry.js',
   '/static/js/document/ui/pdf/persistence.js',
-  '/static/js/gallery.js?v=20260910promptcopy1',
+  '/static/js/gallery.js?v=20261105captionsource1',
   '/static/js/chatRenderer.js?v=20260914metricssummary1',
   '/static/js/codeRunner.js?v=20260831richtexttools91',
   '/static/js/chatStream.js?v=20261026devsync1',
