@@ -2,6 +2,8 @@ import json
 import os
 import re
 
+from services.hwfit.vision import vision_modality
+
 QUANT_HIERARCHY = ["Q8_0", "Q6_K", "Q5_K_M", "Q4_K_M", "Q3_K_M", "Q2_K"]
 
 QUANT_BPP = {
@@ -132,6 +134,10 @@ def _normalize_model_entry(model):
     inferred = infer_quantization_from_name(model.get("name", ""))
     if inferred and (model.get("quantization") in (None, "", "Q4_K_M") or model.get("_discovered")):
         model["quantization"] = inferred
+    # pipeline_tag is dropped by analyze_model's field whitelist, so normalize
+    # it into a `modality` the UI can branch on — it decides whether a model
+    # may be launched with a text-only server. See services/hwfit/vision.py.
+    model["modality"] = vision_modality(model)
     return model
 
 
