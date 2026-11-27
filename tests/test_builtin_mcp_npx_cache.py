@@ -183,3 +183,55 @@ def test_npx_cache_check_fallback_treats_timeout_as_cache_miss(monkeypatch, tmp_
             timeout_s=2,
         )
     ) is False
+def test_find_npx_on_windows_prefers_npx_cmd_over_extensionless_npx(monkeypatch, tmp_path):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+    node_dir = tmp_path / "nodejs"
+    node_dir.mkdir()
+    posix_npx = node_dir / "npx"
+    win_npx_cmd = node_dir / "npx.cmd"
+    posix_npx.write_text("#!/bin/sh\n", encoding="utf-8")
+    win_npx_cmd.write_text("@echo off\r\n", encoding="utf-8")
+
+    def fake_which_tool(name):
+        if name == "npx.cmd":
+            return str(win_npx_cmd)
+        if name == "npx":
+            return str(posix_npx)
+        return None
+
+    monkeypatch.setattr(builtin_mcp, "IS_WINDOWS", True)
+    monkeypatch.setattr(builtin_mcp, "which_tool", fake_which_tool)
+
+    assert builtin_mcp._find_npx() == str(win_npx_cmd)
+
+
+def test_find_npx_on_windows_upgrades_extensionless_which_result_to_sibling_cmd(monkeypatch, tmp_path):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+    node_dir = tmp_path / "nodejs"
+    node_dir.mkdir()
+    posix_npx = node_dir / "npx"
+    win_npx_cmd = node_dir / "npx.cmd"
+    posix_npx.write_text("#!/bin/sh\n", encoding="utf-8")
+    win_npx_cmd.write_text("@echo off\r\n", encoding="utf-8")
+
+    def fake_which_tool(name):
+        if name == "npx":
+            return str(posix_npx)
+        return None
+
+    monkeypatch.setattr(builtin_mcp, "IS_WINDOWS", True)
+    monkeypatch.setattr(builtin_mcp, "which_tool", fake_which_tool)
+
+    assert builtin_mcp._find_npx() == str(win_npx_cmd)
+
+
+def test_find_npx_on_posix_uses_which_tool_npx(monkeypatch):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+    monkeypatch.setattr(builtin_mcp, "IS_WINDOWS", False)
+    monkeypatch.setattr(
+        builtin_mcp,
+        "which_tool",
+        lambda name: "/usr/local/bin/npx" if name == "npx" else None,
+    )
+
+    assert builtin_mcp._find_npx() == "/usr/local/bin/npx"
