@@ -1795,6 +1795,7 @@ async function _refreshEmailLibraryFromUi(btn = null) {
   // mid-refresh. `force: true` adds the cache-buster so the server's
   // 8s list cache is bypassed for an actually-fresh result.
   try {
+    _loadFolders({ live: true, refresh: true }).catch(() => {});
     await _loadEmails({ force: true });
   } finally {
     btn?.classList.remove('email-lib-refreshing');
@@ -3498,13 +3499,15 @@ export function _snapEmailModalToLeftSidebar(modal) {
   return true;
 }
 
-export async function _loadFolders({ resetMissing = false, live = false } = {}) {
+export async function _loadFolders({ resetMissing = false, live = false, refresh = false } = {}) {
   const seq = ++_libFolderSeq;
   const accountAtStart = state._libAccountId || '';
+  const fetchLive = Boolean(live || refresh);
   try {
     const res = await fetch(emailApiUrl('/api/email/folders', {
       account_id: accountAtStart || undefined,
-      cached_only: live ? undefined : 1,
+      cached_only: fetchLive ? undefined : 1,
+      refresh: refresh ? 1 : undefined,
     }));
     let data = await res.json();
     if (seq !== _libFolderSeq || accountAtStart !== (state._libAccountId || '')) return;
@@ -3574,10 +3577,14 @@ export async function _loadFolders({ resetMissing = false, live = false } = {}) 
     schedOpt.textContent = 'Scheduled';
     if (state._libFolder === '__scheduled__') schedOpt.selected = true;
     sel.appendChild(schedOpt);
-	    sel.value = state._libFolder;
-	    _renderFolderPicker();
-	  } catch (e) {}
-	}
+    sel.value = state._libFolder;
+    _renderFolderPicker();
+    const syncSource = String(data?.sync?.source || '');
+    if (!fetchLive && (syncSource === 'folder_cached_only_fallback' || syncSource === 'folder_cache_stale')) {
+      return _loadFolders({ resetMissing, live: true });
+    }
+  } catch (e) {}
+}
 
 function _crossFolderCandidates() {
   const available = Array.isArray(state._libFolders) ? state._libFolders.filter(Boolean) : [];

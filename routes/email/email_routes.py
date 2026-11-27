@@ -5552,19 +5552,24 @@ def setup_email_routes():
     async def list_folders(
         account_id: str | None = Query(None),
         cached_only: int = Query(0),
+        refresh: int = Query(0),
         owner: str = Depends(require_owner),
     ):
         """List IMAP folders."""
         if _fixture_email_enabled():
             return {"folders": ["INBOX", "Archive", "Sent"], "sync": {"source": "local"}}
-        cached = _folder_cache_get(account_id, owner)
-        if cached is not None:
-            payload = dict(cached)
-            sync_meta = dict(payload.get("sync") or {})
-            sync_meta["source"] = "folder_cache"
-            payload["sync"] = sync_meta
-            return payload
-        if cached_only:
+        manual_refresh = bool(refresh)
+        if manual_refresh:
+            _invalidate_imap_pool(account_id, owner)
+        if not manual_refresh:
+            cached = _folder_cache_get(account_id, owner)
+            if cached is not None:
+                payload = dict(cached)
+                sync_meta = dict(payload.get("sync") or {})
+                sync_meta["source"] = "folder_cache"
+                payload["sync"] = sync_meta
+                return payload
+        if cached_only and not manual_refresh:
             stale = _folder_cache_get_stale(account_id, owner)
             if stale:
                 payload = dict(stale)
@@ -5581,11 +5586,11 @@ def setup_email_routes():
             with _imap(account_id, owner=owner) as conn:
                 status, folders = conn.list()
             result = []
+            seen = set()
             for f in folders or []:
-                decoded = f.decode() if isinstance(f, bytes) else f
-                match = re.search(r'"([^"]*)"$|(\S+)$', decoded)
-                if match:
-                    name = match.group(1) or match.group(2)
+                name = _folder_name_from_list_line(f)
+                if name and name not in seen:
+                    seen.add(name)
                     result.append(name)
             return {
                 "folders": result,
