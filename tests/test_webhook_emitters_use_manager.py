@@ -44,7 +44,7 @@ def _untracked_fire_calls(tree: ast.AST) -> list[tuple[int, str]]:
 def test_no_untracked_webhook_fire_in_routes():
     offenders: list[str] = []
     for path in ROUTES_DIR.rglob("*.py"):
-        tree = ast.parse(path.read_text(), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for lineno, snippet in _untracked_fire_calls(tree):
             offenders.append(f"{path.relative_to(ROUTES_DIR.parent)}:{lineno}: {snippet}")
     assert not offenders, (
