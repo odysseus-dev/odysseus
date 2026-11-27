@@ -522,6 +522,59 @@ def test_conditional_action_routes_explicit_product_target(prompt):
 
 
 @pytest.mark.parametrize("prompt", [
+    'For each of the .md files in the "in" folder, create a more condensed '
+    'AI-friendly version in the "out" folder',
+    'For each file in the "in" folder, write a condensed AI-friendly version '
+    'to the "out" folder',
+    "For every file in the folder, delete it",
+    "Please, for each file in the folder, read it",
+])
+def test_for_each_lead_keeps_the_file_family(prompt):
+    assert requested_capabilities(prompt, workspace=True) == {"shell_files"}
+
+
+@pytest.mark.parametrize(("lead", "verb_first"), [
+    ('For each file in the "in" folder, write a condensed version to the "out" folder',
+     'Write a condensed version to the "out" folder for each file in the "in" folder'),
+    ("For each email in my inbox, create a note summarizing it",
+     "Create a note summarizing it for each email in my inbox"),
+    ("For each task, remove it", "Remove it for each task"),
+    ("For each search result, open the website", "Open the website for each search result"),
+])
+def test_for_each_lead_asks_for_what_the_verb_first_form_asks_for(lead, verb_first):
+    assert requested_capabilities(lead, workspace=True) == requested_capabilities(
+        verb_first, workspace=True)
+
+
+@pytest.mark.parametrize("history", [
+    [{"role": "user", "content": "List the files in the in folder"},
+     {"role": "assistant", "content": "a.md and b.md"}],
+    _completed_tool_turn("List the files in the in folder", "ls"),
+])
+@pytest.mark.parametrize(("lead", "verb_first"), [
+    ("For each of them, write a summary", "Write a summary for each of them"),
+    ("For each of them, do the same", "Do the same for each of them"),
+])
+def test_for_each_follow_up_inherits_like_the_verb_first_form(history, lead, verb_first):
+    expected = requested_capabilities(verb_first, history, workspace=True)
+    assert expected == {"shell_files"}
+    assert requested_capabilities(lead, history, workspace=True) == expected
+
+
+def test_for_each_question_grants_nothing():
+    assert requested_capabilities(
+        "For each file in the folder, what is its size?", workspace=True) == frozenset()
+
+
+def test_for_each_prohibition_is_classified_like_the_verb_first_prohibition():
+    lead = "For each file in the workspace, do not delete anything"
+    verb_first = "Do not delete anything for each file in the workspace"
+    assert "shell_files" not in requested_capabilities(lead, workspace=True)
+    assert requested_capabilities(lead, workspace=True) == requested_capabilities(
+        verb_first, workspace=True)
+
+
+@pytest.mark.parametrize("prompt", [
     "What's scheduled for next week?",
     "Do I have anything next week?",
     "What is coming up next week?",
