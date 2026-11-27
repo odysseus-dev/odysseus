@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 # Mock heavy deps so importing src.agent_loop doesn't load the full app stack.
 _MOCKED = [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
+    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database', 'src.agent_tools', 'core.models', 'core.database',
 ]

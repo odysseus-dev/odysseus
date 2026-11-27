@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from src.tool_types import ToolBlock
 
 _MOCKED_IMPORTS = [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
+    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database',
     'src.agent_tools',
