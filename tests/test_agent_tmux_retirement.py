@@ -1,5 +1,6 @@
 """Native Bash does not resurrect tmux; legacy cleanup requires identity."""
 import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,7 @@ from src.constants import DATA_DIR
 from tests.containment_helpers import capture_owned_spawn
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: Popen start_new_session")
 async def test_a_chat_session_always_uses_the_owned_runner(monkeypatch, tmp_path):
     captured = capture_owned_spawn(monkeypatch, tmp_path)
     monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(tmp_path))
