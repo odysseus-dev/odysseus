@@ -516,7 +516,7 @@ class AiEditImageTool:
         if op == "upscale":
             payload["scale"] = int(args.get("scale") or 2)
         elif op == "denoise":
-            payload["strength"] = float(args.get("strength") or 0.5)
+            payload["strength"] = float(0.5 if args.get("strength") is None else args["strength"])
         elif op in ("inpaint", "generative"):
             payload["prompt"] = str(args.get("prompt") or "").strip()
             if model_choice:
@@ -615,7 +615,7 @@ class AiEditImageTool:
                 session,
                 masked=mask_used and data.get("full_frame") is not True,
                 blend=str(args.get("blend") or "normal"),
-                opacity=float(args.get("opacity") or 100),
+                opacity=float(100 if args.get("opacity") is None else args["opacity"]),
                 mode=place_mode,
                 native_size=data.get("full_frame") is True,
             )
@@ -695,7 +695,7 @@ class GenerateImageLayerTool:
                 native_size=True,
                 masked=bool(args.get("mask")),
                 blend=str(args.get("blend") or "normal"),
-                opacity=float(args.get("opacity") or 100),
+                opacity=float(100 if args.get("opacity") is None else args["opacity"]),
             )
             info["placed"] = placed
             if placed:
