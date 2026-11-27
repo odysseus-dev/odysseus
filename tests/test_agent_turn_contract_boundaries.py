@@ -145,3 +145,54 @@ def test_successful_tool_continues_to_synthesis_without_eligible_answer(eligible
     exec(compile(module, str(SOURCE), "exec"), namespace)
     list(namespace["run"]())
     assert reached == [True]
+
+
+def test_non_api_route_retains_relevant_mcp_tools_without_keyword_match():
+    mcp_click = {"type": "function", "function": {"name": "mcp_browser_click"}}
+    mcp_other = {"type": "function", "function": {"name": "mcp_other"}}
+
+    def _run(*, last_user="", relevant_tools=None):
+        namespace = {
+            "FUNCTION_TOOL_SCHEMAS": [],
+            "normalized_external_tool_schemas": [],
+            "disabled_tools": set(),
+            "_pure_web_turn": False,
+            "_native_artifact_runtime": False,
+            "_drop_legacy_email_alias_schemas_when_mcp_available": lambda schemas: schemas,
+            "_filter_route_tool_schemas": lambda schemas: schemas,
+            "turn_contract": None,
+            "guide_only": False,
+            "_force_answer": False,
+            "_artifact_recovery_enabled": False,
+            "_artifact_creation_requested": False,
+            "_artifact_finish_nudge_sent": False,
+            "_artifact_finish_correction_seen": False,
+            "_artifact_finish_post_correction_tool_used": False,
+            "_artifact_finish_post_correction_mutation_seen": False,
+            "_artifact_finish_convergence_sent": False,
+            "_post_correction_verification_available": lambda **_: False,
+            "_force_answer_keeps_artifact_tools": lambda **_: False,
+            "_normalize_model_tool_surface": lambda value: value,
+            "_tui_local_workspace_turn": lambda *a, **kw: False,
+            "_retrieval_query": "",
+            "_last_user": last_user,
+            "workspace": None,
+            "client_runtime_context": None,
+            "_apply_tool_surface_to_schemas": lambda schemas, surface: schemas,
+            "_MCP_KEYWORDS": ("mcp", "browser"),
+        }
+        fn = load_function("_tool_schemas_for_route", namespace)
+        state = {
+            "mcp_schemas": [mcp_click, mcp_other],
+            "relevant_tools": set() if relevant_tools is None else relevant_tools,
+            "qwen38_tool_router": False,
+            "tool_surface": "compact",
+            "is_api_model": False,
+            "ody_qwen_finetune_model": False,
+        }
+        return fn(state)
+
+    assert _run(last_user="continue", relevant_tools={"mcp_browser_click"}) == [mcp_click]
+    assert _run(last_user="continue", relevant_tools=set()) == []
+    assert _run(last_user="open browser", relevant_tools=set()) == [mcp_click, mcp_other]
+
