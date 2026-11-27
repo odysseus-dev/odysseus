@@ -17,6 +17,7 @@ from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.owner_identity import REQUEST_SENTINEL_OWNERS
 from src.constants import DEEP_RESEARCH_DIR
+from src.research_presets import get_research_preset, list_research_presets, recommend_research_preset
 from src import shutdown as _shutdown
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
@@ -891,5 +892,28 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             "name": new_name,
             "source_count": len(sources),
         }
+
+
+    @router.get("/api/research/presets")
+    async def get_research_presets(
+        tier: Optional[str] = Query(default=None),
+        vram_gb: Optional[float] = Query(default=None, gt=0),
+        ram_gb: Optional[float] = Query(default=None, gt=0),
+        model_params_b: Optional[float] = Query(default=None, gt=0),
+    ):
+        """Return Deep Research parameter presets for small, medium, and large local systems."""
+        if tier:
+            try:
+                selected = get_research_preset(tier)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+            return {"preset": selected, "presets": list_research_presets()}
+
+        recommended = recommend_research_preset(
+            vram_gb=vram_gb,
+            ram_gb=ram_gb,
+            model_params_b=model_params_b,
+        )
+        return {"recommended": recommended, "presets": list_research_presets()}
 
     return router
