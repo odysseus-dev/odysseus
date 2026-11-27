@@ -34,6 +34,7 @@ import {
 } from './cookbookServe.js';
 
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { quantTagInclude, quantFileInclude, includeDisplayText } from './cookbookGgufInclude.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import { normalizeCookbookModelDir } from './cookbookModelDirectories.js';
 import { withClipboardTextarea } from './shared/platform/clipboard.js';
@@ -2454,9 +2455,9 @@ function _wireTabEvents(body) {
       const dirs = Array.from(new Set(matches.map(f => f.includes('/') ? f.split('/').slice(0, -1).join('/') : '')));
       if (dirs.length === 1) {
         const prefix = dirs[0] ? `${dirs[0]}/` : '';
-        return `${prefix}*${quant}*.gguf`;
+        return quantFileInclude(quant, prefix);
       }
-      return `*${quant}*.gguf`;
+      return quantFileInclude(quant);
     }
     function _hideGgufPicker(message = '') {
       if (dlGgufRow) dlGgufRow.style.display = 'none';
@@ -2524,7 +2525,7 @@ function _wireTabEvents(body) {
     function _splitRepoTag(raw) {
       const m = raw.match(/^([^\s/:]+\/[^\s/:]+):([^\s/]+)$/);
       if (!m) return { repo: raw, include: null };
-      return { repo: m[1], include: `*${m[2]}*` };
+      return { repo: m[1], include: quantTagInclude(m[2]) };
     }
     // Split `org/repo/path/to/file.gguf` (or `.safetensors`/`.bin`) into
     // repo + exact file include. Lets the user paste a path straight out
@@ -2633,7 +2634,7 @@ function _wireTabEvents(body) {
       }
       const shortName = repo.split('/').pop();
       const displayName = payload.include
-        ? `${shortName} · ${_ggufQuantFromPath(String(payload.include).replace(/\*/g, '')) || String(payload.include).replace(/\*/g, '').replace(/\.gguf$/i, '')}`
+        ? `${shortName} · ${_ggufQuantFromPath(includeDisplayText(payload.include)) || includeDisplayText(payload.include).replace(/\.gguf$/i, '')}`
         : shortName;
       _retryDownload(displayName, payload);
       dlInput.value = '';
