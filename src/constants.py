@@ -83,6 +83,7 @@ MODEL_CUSTOMIZATIONS_FILE = os.path.join(DATA_DIR, "model_customizations.json")
 APP_DB = os.path.join(DATA_DIR, "app.db")
 SCHEDULED_EMAILS_DB = os.path.join(DATA_DIR, "scheduled_emails.db")
 EMAIL_CACHE_DB = os.path.join(DATA_DIR, "email_cache.db")
+EMAIL_SEARCH_MAX_TERMS = 6
 
 # Data subdirectories
 PERSONAL_UPLOADS_DIR = os.path.join(DATA_DIR, "personal_uploads")
