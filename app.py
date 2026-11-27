@@ -206,7 +206,10 @@ _TIMEOUT_EXEMPT_PREFIXES = (
 class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         path = request.url.path or ""
-        if any(path.startswith(p) for p in _TIMEOUT_EXEMPT_PREFIXES):
+        # Gallery OCR and AI tagging wait up to 300s on the vision model; the
+        # image id sits mid-path, so a prefix alone can't exempt them.
+        if any(path.startswith(p) for p in _TIMEOUT_EXEMPT_PREFIXES) or (
+                path.startswith("/api/gallery/") and path.endswith(("/ocr", "/ai-tag"))):
             return await call_next(request)
         try:
             return await _asyncio.wait_for(call_next(request), timeout=REQUEST_HARD_TIMEOUT)
