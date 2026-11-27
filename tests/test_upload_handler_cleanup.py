@@ -680,14 +680,15 @@ def test_remaining_durable_writers_reserve_before_commit(monkeypatch):
 
         manager = SessionManager()
         manager.upload_handler = handler
-        manager._persist_message(
-            "writer-session",
-            ChatMessage(
-                "user",
-                "attachment",
-                metadata={"attachments": [{"id": upload_id}]},
-            ),
-        )
+        with pytest.raises(ValueError, match="no longer available"):
+            manager._persist_message(
+                "writer-session",
+                ChatMessage(
+                    "user",
+                    "attachment",
+                    metadata={"attachments": [{"id": upload_id}]},
+                ),
+            )
 
         document_result = asyncio.run(EditDocumentTool().execute(
             "<<<FIND>>>\n\n<<<REPLACE>>>\n"
