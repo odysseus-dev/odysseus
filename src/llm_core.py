@@ -1155,6 +1155,8 @@ def _detect_provider(url: str) -> str:
         return "cerebras"
     if _host_match(url, "mistral.ai"):
         return "mistral"
+    if _host_match(url, "poe.com"):
+        return "poe"
     return "openai"
 
 
@@ -1386,6 +1388,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "cerebras.ai"):
         return "cerebras"
     if _host_match(url, "mistral.ai"): return "Mistral"
+    if _host_match(url, "poe.com"): return "Poe"
     if _host_match(url, "deepseek.com"): return "DeepSeek"
     if _host_match(url, "nvidia.com"): return "NVIDIA"
     if _host_match(url, "googleapis.com"): return "Google"
@@ -1635,6 +1638,147 @@ def _chatgpt_safe_error(message: str, headers: Dict) -> str:
             secret = str(value).removeprefix("Bearer ")
             result = result.replace(str(value), "[redacted]").replace(secret, "[redacted]")
     return result
+
+
+def _normalize_openai_responses_url(url: str) -> str:
+    """Ensure OpenAI-compatible Responses API URL points to /v1/responses."""
+    base = (url or "").strip().rstrip("/")
+    for suffix in ("/chat/completions", "/completions", "/models", "/v1/messages"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    if base.endswith("/responses"):
+        return base
+    if base.endswith("/v1"):
+        return base + "/responses"
+    return base + "/v1/responses"
+
+
+def _build_openai_responses_tools(tools: Optional[List[Dict]]) -> List[Dict]:
+    """Convert OpenAI Chat Completions tool schemas to Responses API tool schemas."""
+    converted: List[Dict] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("type") != "function":
+            converted.append(dict(tool))
+            continue
+        fn = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        name = (fn.get("name") or "").strip()
+        if not name:
+            continue
+        entry: Dict = {
+            "type": "function",
+            "name": name,
+        }
+        if fn.get("description"):
+            entry["description"] = fn["description"]
+        params = fn.get("parameters")
+        entry["parameters"] = params if isinstance(params, dict) else {"type": "object", "properties": {}}
+        if "strict" in fn:
+            entry["strict"] = fn["strict"]
+        converted.append(entry)
+    return converted
+
+
+def _build_openai_responses_input(messages: List[Dict]) -> List[Dict]:
+    """Convert non-system Chat Completions messages into Responses API input items."""
+    items: List[Dict] = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        role = (msg.get("role") or "user").strip()
+        if role == "system":
+            continue
+        if role == "tool":
+            call_id = str(msg.get("tool_call_id") or "").strip()
+            output_text = _message_content_as_text(msg.get("content"))
+            items.append({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output_text,
+            })
+            continue
+        if role == "assistant":
+            text = _message_content_as_text(msg.get("content"))
+            if text:
+                items.append({
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                })
+            for idx, tc in enumerate(msg.get("tool_calls") or []):
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+                name = str(fn.get("name") or tc.get("name") or "").strip()
+                if not name:
+                    continue
+                raw_args = fn.get("arguments") if "arguments" in fn else tc.get("arguments", "{}")
+                args_str = raw_args if isinstance(raw_args, str) else json.dumps(raw_args or {})
+                call_id = str(tc.get("id") or tc.get("call_id") or f"call_{idx}").strip()
+                items.append({
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": args_str,
+                })
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            parts: List[Dict] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    if part:
+                        parts.append({"type": "input_text", "text": str(part)})
+                    continue
+                if part.get("type") == "image_url":
+                    img = part.get("image_url")
+                    img_url = img.get("url") if isinstance(img, dict) else img
+                    if img_url:
+                        parts.append({"type": "input_image", "image_url": img_url})
+                else:
+                    txt = part.get("text") or part.get("content") or ""
+                    if txt:
+                        parts.append({"type": "input_text", "text": str(txt)})
+            if not parts:
+                parts.append({"type": "input_text", "text": ""})
+            items.append({"role": "user", "content": parts})
+        else:
+            text = "" if content is None else str(content)
+            items.append({"role": "user", "content": [{"type": "input_text", "text": text}]})
+    return items
+
+
+def _build_openai_responses_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: Optional[float],
+    max_tokens: int,
+    *,
+    stream: bool = False,
+    tools: Optional[List[Dict]] = None,
+    tool_choice_none: bool = False,
+    provider: str = "poe",
+) -> Dict:
+    """Build an OpenAI Responses API payload (used for providers like Poe)."""
+    payload: Dict = {
+        "model": model,
+        "instructions": _chatgpt_subscription_instructions(messages),
+        "input": _build_openai_responses_input(messages),
+        "stream": stream,
+    }
+    if temperature is not None and not _omit_temperature(provider, model):
+        payload["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        payload["max_output_tokens"] = max_tokens
+    if tools:
+        responses_tools = _build_openai_responses_tools(tools)
+        if responses_tools:
+            payload["tools"] = responses_tools
+            payload["tool_choice"] = "auto"
+    elif tool_choice_none:
+        payload["tool_choice"] = "none"
+    return payload
 
 
 def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
@@ -2731,7 +2875,7 @@ async def llm_call_async(
             return cached_response, (_get_cached_response_model(cache_key) or model)
         return cached_response
 
-    if provider == "chatgpt-subscription":
+    if provider in {"chatgpt-subscription", "poe"}:
         # ChatGPT/Codex requires streamed Responses requests even for callers
         # that want a plain string (auto-title, memory extraction, etc.).
         # Reuse stream_llm's validated Codex SSE path and collect deltas.
@@ -2988,6 +3132,8 @@ def _stream_target_url(url: str) -> str:
         return _normalize_ollama_url(url)
     if provider == "chatgpt-subscription":
         return _normalize_chatgpt_subscription_url(url)
+    if provider == "poe":
+        return _normalize_openai_responses_url(url)
     return _normalize_openai_chat_url(url)
 
 
@@ -3071,6 +3217,19 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             model, messages_copy, temperature, max_tokens, stream=True,
             reasoning_effort=reasoning_effort,
         )
+    elif provider == "poe":
+        target_url = _normalize_openai_responses_url(url)
+        h = _provider_headers(provider, headers)
+        payload = _build_openai_responses_payload(
+            model,
+            messages_copy,
+            temperature,
+            max_tokens,
+            stream=True,
+            tools=tools,
+            tool_choice_none=tool_choice_none,
+            provider=provider,
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -3134,19 +3293,24 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     degenerate_guard = _DegenerateStreamGuard(model)
 
     # ── ChatGPT Subscription / Codex Responses streaming ──
-    if provider == "chatgpt-subscription":
+    if provider in {"chatgpt-subscription", "poe"}:
         event_name = ""
         input_tokens = 0
         output_tokens = 0
         _responses_actual_model = ""
         _responses_model_announced = False
+        _resp_tool_calls: Dict[str, Dict] = {}
+        _resp_tool_order: List[str] = []
         try:
             client = _get_http_client()
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
-                    friendly = _format_chatgpt_subscription_error(r.status_code, _chatgpt_safe_error(raw, h))
+                    if provider == "chatgpt-subscription":
+                        friendly = _format_chatgpt_subscription_error(r.status_code, _chatgpt_safe_error(raw, h))
+                    else:
+                        friendly = _format_upstream_error(r.status_code, _chatgpt_safe_error(raw, h), target_url)
                     yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
@@ -3160,6 +3324,21 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                     raw = line[5:].strip()
                     if not raw:
                         continue
+                    if raw == "[DONE]":
+                        if _resp_tool_calls and provider != "chatgpt-subscription":
+                            calls = [
+                                {
+                                    "id": _resp_tool_calls[k]["call_id"],
+                                    "name": _resp_tool_calls[k]["name"],
+                                    "arguments": _resp_tool_calls[k]["arguments"],
+                                }
+                                for k in _resp_tool_order
+                                if _resp_tool_calls[k].get("name")
+                            ]
+                            if calls:
+                                yield f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
+                        yield "data: [DONE]\n\n"
+                        return
                     try:
                         data = json.loads(raw)
                     except json.JSONDecodeError:
@@ -3189,7 +3368,65 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                 yield _degenerate
                                 return
                             yield f'data: {json.dumps({"delta": delta})}\n\n'
+                    elif evt == "response.output_item.added" and provider != "chatgpt-subscription":
+                        item = data.get("item") if isinstance(data.get("item"), dict) else {}
+                        if item.get("type") == "function_call":
+                            key = str(item.get("id") or item.get("call_id") or data.get("output_index") or len(_resp_tool_order))
+                            if key not in _resp_tool_calls:
+                                _resp_tool_order.append(key)
+                            _resp_tool_calls[key] = {
+                                "call_id": str(item.get("call_id") or item.get("id") or f"call_{len(_resp_tool_order)}"),
+                                "name": str(item.get("name") or ""),
+                                "arguments": str(item.get("arguments") or ""),
+                            }
+                    elif evt == "response.function_call_arguments.delta" and provider != "chatgpt-subscription":
+                        key = str(data.get("item_id") or data.get("call_id") or data.get("output_index") or (_resp_tool_order[-1] if _resp_tool_order else "0"))
+                        if key not in _resp_tool_calls:
+                            _resp_tool_order.append(key)
+                            _resp_tool_calls[key] = {"call_id": key, "name": "", "arguments": ""}
+                        _resp_tool_calls[key]["arguments"] += str(data.get("delta") or "")
+                    elif evt == "response.function_call_arguments.done" and provider != "chatgpt-subscription":
+                        key = str(data.get("item_id") or data.get("call_id") or data.get("output_index") or (_resp_tool_order[-1] if _resp_tool_order else "0"))
+                        if key in _resp_tool_calls and "arguments" in data:
+                            _resp_tool_calls[key]["arguments"] = str(data.get("arguments") or "")
+                    elif evt == "response.output_item.done" and provider != "chatgpt-subscription":
+                        item = data.get("item") if isinstance(data.get("item"), dict) else {}
+                        if item.get("type") == "function_call":
+                            key = str(item.get("id") or item.get("call_id") or data.get("output_index") or len(_resp_tool_order))
+                            if key not in _resp_tool_calls:
+                                _resp_tool_order.append(key)
+                            existing = _resp_tool_calls.get(key) or {}
+                            _resp_tool_calls[key] = {
+                                "call_id": str(item.get("call_id") or item.get("id") or existing.get("call_id") or f"call_{len(_resp_tool_order)}"),
+                                "name": str(item.get("name") or existing.get("name") or ""),
+                                "arguments": str(item.get("arguments") if item.get("arguments") is not None else existing.get("arguments") or "{}"),
+                            }
                     elif evt == "response.completed":
+                        if provider != "chatgpt-subscription":
+                            output_items = (response_data.get("output") if isinstance(response_data, dict) else None) or []
+                            for idx_out, item in enumerate(output_items):
+                                if not isinstance(item, dict) or item.get("type") != "function_call":
+                                    continue
+                                key = str(item.get("id") or item.get("call_id") or f"out_{idx_out}")
+                                if key not in _resp_tool_calls:
+                                    _resp_tool_order.append(key)
+                                    _resp_tool_calls[key] = {
+                                        "call_id": str(item.get("call_id") or item.get("id") or f"call_{idx_out}"),
+                                        "name": str(item.get("name") or ""),
+                                        "arguments": str(item.get("arguments") or "{}"),
+                                    }
+                            if _resp_tool_calls:
+                                calls = [
+                                    {
+                                        "id": _resp_tool_calls[k]["call_id"],
+                                        "name": _resp_tool_calls[k]["name"],
+                                        "arguments": _resp_tool_calls[k]["arguments"],
+                                    }
+                                    for k in _resp_tool_order
+                                    if _resp_tool_calls[k].get("name")
+                                ]
+                                if calls:
+                                    yield f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
                         usage = (data.get("response") or {}).get("usage") or data.get("usage") or {}
                         if isinstance(usage, dict):
                             raw_input = (
