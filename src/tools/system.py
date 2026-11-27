@@ -595,8 +595,21 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 from src.agent_runtime.authority import seal_task_authority
                 task.request_authority_json = seal_task_authority(
                     task.prompt, task.task_type, task.action, owner=owner)
+            schedule_changed = False
             if args.get("trigger_type") is not None:
-                task.trigger_type = args["trigger_type"]
+                prev_trigger = task.trigger_type or "schedule"
+                new_trigger = args["trigger_type"]
+                if new_trigger != "schedule":
+                    task.next_run = None
+                    if prev_trigger == "schedule":
+                        task.schedule = None
+                        task.scheduled_time = None
+                        task.scheduled_day = None
+                        task.scheduled_date = None
+                        task.cron_expression = None
+                elif prev_trigger != "schedule":
+                    schedule_changed = True
+                task.trigger_type = new_trigger
                 changed.append("trigger_type")
             if args.get("trigger_event") is not None:
                 task.trigger_event = args["trigger_event"]
@@ -604,8 +617,6 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             if args.get("trigger_count") is not None:
                 task.trigger_count = args["trigger_count"]
                 changed.append("trigger_count")
-
-            schedule_changed = False
             for field in ("schedule", "scheduled_time", "scheduled_day", "cron_expression"):
                 if args.get(field) is not None:
                     setattr(task, field, args[field])
