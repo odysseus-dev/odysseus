@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.agent_runtime.authority import RequestAuthority, OperationGrant, bind_request_authority
 from src.tool_policy import ToolPolicy, WEB_ACCESS_TOOL_NAMES
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.turn_contract import (
@@ -111,7 +112,6 @@ def resolve(capabilities=(), *, schemas=FUNCTION_TOOL_SCHEMAS, policy=None, requ
                                  selected_tools=selected_tools,
                                  always_available_tools=always_available_tools,
                                  warm_tools=warm_tools, message=message)
-
 
 def test_latest_topic_info_and_common_news_typo_route_to_web_search():
     """Broad current-info prompts must not silently lose the Web surface."""
@@ -4413,3 +4413,36 @@ def test_chinese_video_to_image_artifact_keeps_media_and_workspace_tools():
         "请完整浏览 /workspace/input/video.mp4，为每款零食截图并拼成清单图，"
         "输出到 /workspace/snack_checklist.jpg，交付前打开成品图检查。"
     ) == {"media_inspection", "shell_files"}
+
+
+def test_mcp_contract_only_offers_tools_granted_by_request_authority():
+    allowed = "mcp__test_server__read_data"
+    denied = "mcp__test_server__delete_data"
+
+    def schema(name):
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": "Test MCP operation",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+    authority = RequestAuthority(
+        "req-test-mcp-contract",
+        "alice",
+        "session-test",
+        "",
+        (OperationGrant(allowed),),
+    )
+
+    with bind_request_authority(authority):
+        contract = resolve(
+            schemas=[schema(allowed), schema(denied)],
+        )
+
+    assert allowed in contract.offered
+    assert denied not in contract.offered
+    assert contract.permits(allowed)
+    assert not contract.permits(denied)
