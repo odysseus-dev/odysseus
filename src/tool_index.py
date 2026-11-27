@@ -287,6 +287,8 @@ class ToolIndex:
         """Index MCP tool descriptions. Call after MCP servers connect/disconnect."""
         if not mcp_mgr:
             return
+        self._last_mcp_mgr = mcp_mgr
+        self._last_mcp_disabled_map = disabled_map or {}
 
         # Get current MCP generation to avoid redundant reindexing
         gen = getattr(mcp_mgr, '_generation', 0)
@@ -602,7 +604,12 @@ class ToolIndex:
     }
 
     def get_tools_for_query(
-        self, query: str, k: int = 8, always_include: Optional[Set[str]] = None
+        self,
+        query: str,
+        k: int = 8,
+        always_include: Optional[Set[str]] = None,
+        mcp_mgr: Any = None,
+        disabled_map: Optional[Dict] = None,
     ) -> Set[str]:
         """Get the set of tool names to include for a given user query."""
         base = set(always_include or ALWAYS_AVAILABLE)
@@ -696,7 +703,106 @@ class ToolIndex:
             base.add("manage_contact")
         if contact_only_signal and "manage_contact" in base:
             base.discard("manage_memory")
+        effective_mcp_mgr = mcp_mgr if mcp_mgr is not None else getattr(self, "_last_mcp_mgr", None)
+        effective_disabled = disabled_map if disabled_map is not None else getattr(self, "_last_mcp_disabled_map", None)
+        if effective_mcp_mgr is not None:
+            base.update(matching_user_mcp_tools(query, effective_mcp_mgr, effective_disabled))
         return base
+
+
+_MCP_QUERY_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "use", "using", "from", "into", "about",
+    "what", "does", "say", "says", "said", "tools", "tool", "server",
+    "mcp", "please", "can", "could", "would", "you", "your", "my", "our",
+    "this", "that", "these", "those", "have", "has", "had", "get", "show",
+    "find", "give", "tell", "me", "in", "on", "at", "to", "of", "is", "are",
+})
+
+
+def _query_match_tokens(text: str) -> Set[str]:
+    tokens = {
+        tok
+        for tok in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(tok) >= 3 and tok not in _MCP_QUERY_STOPWORDS
+    }
+    return tokens
+
+
+def matching_user_mcp_tools(
+    query: str,
+    mcp_mgr: Any,
+    disabled_map: Optional[Dict] = None,
+    max_tools: int = 16,
+) -> Set[str]:
+    """Return qualified names of enabled user-added MCP tools matching query."""
+    if not query or not mcp_mgr:
+        return set()
+    try:
+        all_tools = mcp_mgr.get_all_tools(disabled_map or {})
+    except Exception:
+        return set()
+    if not all_tools:
+        return set()
+
+    ql = query.lower()
+    query_tokens = _query_match_tokens(query)
+    is_builtin = getattr(mcp_mgr, "is_builtin", None)
+    statuses = getattr(mcp_mgr, "get_all_statuses", lambda: {})() or {}
+    connections = getattr(mcp_mgr, "_connections", {}) or {}
+
+    server_named_tools: List[str] = []
+    scored_tools: List[tuple[int, str]] = []
+
+    for info in all_tools:
+        if info.get("is_disabled"):
+            continue
+        server_id = str(info.get("server_id") or "")
+        if not server_id:
+            continue
+        if callable(is_builtin) and is_builtin(server_id):
+            continue
+        conn_status = (statuses.get(server_id) or {}).get("status", "connected")
+        if conn_status not in ("connected", "ready", ""):
+            continue
+
+        qualified = str(info.get("qualified_name") or f"mcp__{server_id}__{info.get('name', '')}")
+        server_name = str(info.get("server_name") or "").strip()
+        identity = str((connections.get(server_id) or {}).get("identity") or "").strip()
+
+        server_named = False
+        for label in (server_name, identity):
+            if label and len(label) >= 2 and re.search(rf"(?<![a-z0-9_]){re.escape(label.lower())}(?![a-z0-9_])", ql):
+                server_named = True
+                break
+
+        if server_named:
+            if qualified not in server_named_tools:
+                server_named_tools.append(qualified)
+            continue
+
+        if not query_tokens:
+            continue
+        bare_words = str(info.get("name") or "").replace("_", " ").replace("-", " ")
+        desc_words = str(info.get("description") or "").replace("_", " ").replace("-", " ")
+        tool_tokens = _query_match_tokens(f"{server_name} {identity} {bare_words} {desc_words}")
+        overlap = len(query_tokens & tool_tokens)
+        if overlap > 0:
+            scored_tools.append((overlap, qualified))
+
+    selected: List[str] = []
+    for name in server_named_tools:
+        if name not in selected:
+            selected.append(name)
+        if len(selected) >= max_tools:
+            return set(selected)
+
+    scored_tools.sort(key=lambda item: (-item[0], item[1]))
+    for _, name in scored_tools:
+        if name not in selected:
+            selected.append(name)
+        if len(selected) >= max_tools:
+            break
+    return set(selected)
 
 
 # ── Singleton ──
