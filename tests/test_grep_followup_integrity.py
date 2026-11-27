@@ -82,6 +82,7 @@ def test_invalid_regex_is_error_not_empty_search(tmp_path):
     assert 'No matches' not in str(result)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="chmod(0) does not make a file unreadable on Windows")
 def test_fallback_unreadable_file_is_error_not_empty(tmp_path, monkeypatch):
     if os.geteuid() == 0:
         pytest.skip('Root bypasses filesystem read permission fixture')
