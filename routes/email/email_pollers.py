@@ -464,7 +464,10 @@ def _send_away_reply(settings: dict, account_owner: str, account_id: str | None,
     outer["To"] = email.utils.formataddr((sender_name, sender_addr)) if sender_name else sender_addr
     outer["Subject"] = reply_subject
     outer["Date"] = email.utils.formatdate(localtime=False)
-    outer["Message-ID"] = email.utils.make_msgid()
+    # From-domain Message-ID — bare make_msgid() would use the container's
+    # non-resolvable fqdn, which receivers silently discard.
+    from_domain = (from_addr or "").rsplit("@", 1)[-1].strip()
+    outer["Message-ID"] = email.utils.make_msgid(domain=from_domain or None)
     outer["Auto-Submitted"] = "auto-replied"
     outer["X-Auto-Response-Suppress"] = "All"
     if message_id:
@@ -1417,6 +1420,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     outer_alert["To"] = to_addr
                                     outer_alert["Subject"] = alert_subject
                                     outer_alert["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+                                    from_domain = (cfg.get("from_address") or "").rsplit("@", 1)[-1].strip()
+                                    outer_alert["Message-ID"] = email.utils.make_msgid(domain=from_domain or None)
                                     outer_alert["X-Priority"] = "1"
                                     outer_alert["Importance"] = "high"
                                     outer_alert.attach(MIMEText(alert_body, "plain", "utf-8"))
@@ -1645,6 +1650,8 @@ def _scheduled_poll_once() -> dict:
                     outer["Cc"] = r[2]
                 outer["Subject"] = r[4] or ""
                 outer["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+                from_domain = (cfg.get("from_address") or "").rsplit("@", 1)[-1].strip()
+                outer["Message-ID"] = email.utils.make_msgid(domain=from_domain or None)
                 outer["X-Odysseus-Origin"] = "odysseus-ui"
                 outer["X-Odysseus-Kind"] = re.sub(r"[^A-Za-z0-9_.-]", "-", odysseus_kind or "scheduled")[:64]
                 outer["X-Odysseus-Ref"] = sid
