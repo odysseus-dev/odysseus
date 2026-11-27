@@ -46,6 +46,36 @@ ODYSSEUS_IMAGE=ghcr.io/odysseus-dev/odysseus:1.0.2-7c8070f docker compose up -d
 
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](website/setup.md).
 
+### Run locally (without Docker)
+
+From the cloned `odysseus` directory, use the launcher for your platform:
+
+**Windows** (Python 3.11+):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
+```
+
+**macOS**:
+
+```bash
+./start-macos.sh
+```
+
+The launchers create a virtual environment, install dependencies, run setup, and start the server. Open the URL printed in the terminal (Windows defaults to `http://localhost:7000`; macOS defaults to `http://localhost:7860`).
+
+**Manual Linux / macOS** (Python 3.11+):
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python setup.py
+python -m uvicorn app:app --host 127.0.0.1 --port 7000
+```
+
+For the manual path, open `http://localhost:7000`. Use the admin credentials from setup; if setup generates a temporary password, it prints it in the terminal. Cookbook background jobs also require `tmux`, and vector memory/RAG require a reachable ChromaDB server. See the [native setup instructions](website/setup.md#native-linux--macos) and [Windows notes](website/setup.md#native-windows) for platform details.
+
 ## Features
 
 - **Chat + Agents** — local/API models, tools, MCP, files, shell, skills, and memory.
