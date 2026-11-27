@@ -128,9 +128,13 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         # Calendar/event lookup. A question such as "Do I have Taekwondo
         # classes this week?" needs the calendar tool; plain chat cannot know.
         ("calendar", "calendar lookup request", rf"\b(?:list|show|check|find)\b.{{0,120}}\b(?:my\s+|the\s+)?(?:upcoming|next|latest|recent|today'?s?|tomorrow'?s?|this\s+week'?s?)\b.{{0,120}}\b{_CALENDAR_READ_THING}\b"),
-        ("calendar", "calendar lookup question", rf"\b(?:what|which)\b.{{0,120}}\b(?:upcoming|next|latest|recent|today'?s?|tomorrow'?s?|this\s+week'?s?)\b.{{0,120}}\b{_CALENDAR_READ_THING}\b"),
+        ("calendar", "calendar lookup question", rf"\b(?:what|which)\b.{{0,120}}\b(?:upcoming|next|latest|recent|today'?s?|tomorrow'?s?|this\s+week'?s?)\b(?!\s+current\s+events?\b).{{0,120}}\b{_CALENDAR_READ_THING}\b"),
         ("calendar", "calendar availability question", rf"\bdo\s+i\s+have\b.{{0,120}}\b(?:upcoming|next|today|tomorrow|this\s+week)\b.{{0,120}}\b{_CALENDAR_READ_THING}\b"),
         ("calendar", "calendar agenda question", r"\bwhat(?:'s| is)\s+on\s+(?:my\s+)?calendar\b"),
+        ("calendar", "calendar events list request", rf"\b(?:list|show|check|find|read|view|get|give\s+me)\b.{{0,80}}\b(?:all\s+)?(?:my\s+|the\s+|our\s+)?(?:calendar\s+(?:events?|entries|items?|appointments?|meetings?)|(?:events?|appointments?|meetings?)\s+(?:on|in)\s+(?:my\s+|the\s+|our\s+)?calendar)\b"),
+        ("calendar", "calendar events question", rf"\b(?:what|which)\b.{{0,80}}\b(?:events?|appointments?|meetings?|entries|items?)\b.{{0,60}}\b(?:on|in)\s+(?:my\s+|the\s+|our\s+)?calendar\b"),
+        ("calendar", "calendar availability question", rf"\bdo\s+i\s+have\b.{{0,80}}\b(?:any\s+)?(?:calendar\s+)?(?:events?|appointments?|meetings?)\b.{{0,60}}\b(?:on|in)\s+(?:my\s+|the\s+|our\s+)?calendar\b"),
+        ("calendar", "calendar data read request", rf"{_PLEASE}(?:show|list|check|read)\s+(?:me\s+)?(?:my\s+|the\s+|our\s+)?(?:calendars?|schedule)(?!\s+(?:panel|view|sidebar|tab|screen)\b)[.!?]*\s*$"),
         ("calendar", "next calendar item question", r"\bwhen\s+(?:is|are)\s+(?:my\s+)?next\s+(?:event|meeting|appointment|class)\b"),
 
         # Notes, todos, checklists, and reminders.
@@ -154,7 +158,7 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("email", "unread email request", r"\bunread\s+(?:email|mail)s?\b"),
 
         # UI/control-plane actions that should open panels or flip toggles.
-        ("ui", "open/show panel request", rf"{_PLEASE}(?:open|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b"),
+        ("ui", "open/show panel request", rf"{_PLEASE}(?:(?:open|pop\s+open|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b|show\s+(?:me\s+)?(?:my\s+|the\s+)?(?:{_PANEL}\s+(?:panel|view|sidebar|tab|screen)|(?:inbox|gallery|settings|cookbook|sessions?|chats?|history))\b)"),
         ("ui", "tool or feature toggle request", r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research|incognito)\b"),
 
         # Deep research jobs, not quick conceptual mentions of research.
