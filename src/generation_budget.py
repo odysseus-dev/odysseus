@@ -28,6 +28,7 @@ _CONTEXT_LIMIT_PATTERNS = (
     r"maximum context(?: length| window| size)?\s*\(([\d,]+)\)",
     r"context(?: length| window| size)(?: is(?: only)?| of|:|=)\s*([\d,]+)",
     r"max(?:imum)?[_ ]model[_ ]len(?: is| of|:|=)?\s*([\d,]+)",
+    r"available context size\s*\(([\d,]+)\s*tokens\)",
 )
 
 _INPUT_TOKEN_PATTERNS = (
@@ -35,6 +36,7 @@ _INPUT_TOKEN_PATTERNS = (
     r"(?:request has|resulted in|contains?)\s*([\d,]+)\s*(?:input|prompt)?\s*tokens",
     r"([\d,]+)\s*(?:input|prompt)\s*tokens",
     r"([\d,]+)\s*in (?:the )?messages",
+    r"request\s*\(([\d,]+)\s*tokens\)",
 )
 
 # Local multimodal servers tokenize an image into visual patch tokens after the
