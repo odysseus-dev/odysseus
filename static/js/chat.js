@@ -1499,6 +1499,10 @@ import { invalidateSettings } from './appConfig.js';
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
   let _staleStreamProbeInFlight = false;
   const STALE_LOCAL_STREAM_MS = 15000;
+  const BACKGROUND_HIDDEN_REATTACH_MS = 10000;
+  const BACKGROUND_RETURN_SILENCE_MS = 3000;
+  let _hiddenAt = 0;
+  let _bgReturnReenterTimer = null;
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
@@ -6396,7 +6400,25 @@ import { invalidateSettings } from './appConfig.js';
       // never attach the recovery reader to the wrong conversation.
       if (sessionId && sessionModule.getCurrentSessionId() !== sessionId) return;
       const resumed = await resumeStream(sessionId, holder || null);
-      if (!resumed && holder && holder.isConnected) {
+      if (resumed) return;
+      if (sessionId) {
+        try {
+          const statusRes = await fetch(
+            `${API_BASE}/api/chat/stream_status/${encodeURIComponent(sessionId)}`,
+            { credentials: 'same-origin', cache: 'no-store' }
+          );
+          let probe = null;
+          try { probe = await statusRes.json(); } catch (_) { probe = null; }
+          const finishedOnServer = statusRes.status === 404 || (
+            statusRes.ok && probe && typeof probe.status === 'string' && probe.status !== 'streaming'
+          );
+          if (finishedOnServer && sessionModule && sessionModule.selectSession) {
+            await sessionModule.selectSession(sessionId, { showLoading: false });
+            return;
+          }
+        } catch (_) {}
+      }
+      if (holder && holder.isConnected) {
         const body = holder.querySelector('.body');
         if (body) typewriterInto(body, 'Connection lost. The existing run could not be resumed.');
       }
@@ -6483,6 +6505,9 @@ import { invalidateSettings } from './appConfig.js';
       const messageInput = uiModule.el('message');
       if (messageInput) messageInput.disabled = false;
       _drainQueuedAgentRequests();
+      if (sessionModule && sessionModule.selectSession) {
+        await sessionModule.selectSession(sid, { showLoading: false });
+      }
     } catch (err) {
       console.warn('[stream-watchdog] Stream status probe failed:', err);
     } finally {
@@ -7224,8 +7249,41 @@ import { invalidateSettings } from './appConfig.js';
     // no run exists.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') {
+        if (!_hiddenAt) _hiddenAt = Date.now();
+        if (_bgReturnReenterTimer) {
+          clearTimeout(_bgReturnReenterTimer);
+          _bgReturnReenterTimer = null;
+        }
         for (const active of _activeStreams.values()) active.wasAway = true;
         return;
+      }
+      const hiddenDuration = _hiddenAt ? (Date.now() - _hiddenAt) : 0;
+      _hiddenAt = 0;
+      const returnedAt = Date.now();
+      if (_bgReturnReenterTimer) {
+        clearTimeout(_bgReturnReenterTimer);
+        _bgReturnReenterTimer = null;
+      }
+      if (hiddenDuration >= BACKGROUND_HIDDEN_REATTACH_MS) {
+        const sid = sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+        const activeAtReturn = sid ? _activeStreams.get(sid) : null;
+        if (sid && activeAtReturn) {
+          _bgReturnReenterTimer = setTimeout(() => {
+            _bgReturnReenterTimer = null;
+            if (document.visibilityState !== 'visible') return;
+            const currentSid = sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+            if (currentSid !== sid) return;
+            const currentActive = _activeStreams.get(sid);
+            if (!currentActive) return;
+            const lastSeen = currentActive.lastActivity || _lastReaderActivity || 0;
+            if (lastSeen >= returnedAt) return;
+            if (sessionModule && sessionModule.selectSession) {
+              sessionModule.selectSession(sid, { showLoading: false }).catch(err => {
+                console.warn('[tab-recovery] Session re-entry after background return failed:', err);
+              });
+            }
+          }, BACKGROUND_RETURN_SILENCE_MS);
+        }
       }
       _restoreQueuedRequestsForCurrentSession();
       _probeStaleLocalStream().then(() => {
