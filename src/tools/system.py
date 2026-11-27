@@ -8,6 +8,7 @@ The admin manage_* tools (endpoints, mcp, webhooks, tokens, settings) live in
 """
 import json
 import logging
+import math
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -218,7 +219,13 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         updates = {"status": "published"}
         if args.get("confidence") is not None:
-            updates["confidence"] = max(0.0, min(1.0, float(args["confidence"])))
+            try:
+                confidence = float(args["confidence"])
+            except (TypeError, ValueError, OverflowError):
+                return {"error": "confidence must be a finite number", "exit_code": 1}
+            if not math.isfinite(confidence):
+                return {"error": "confidence must be a finite number", "exit_code": 1}
+            updates["confidence"] = max(0.0, min(1.0, confidence))
         if not sm.update_skill(name, updates, owner=owner):
             return {"error": "Skill could not be published; no update was saved.", "exit_code": 1}
         return {"results": f"Published `{name}`. Automatic use remains subject to skill audit and approval settings."}
