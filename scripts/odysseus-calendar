@@ -32,7 +32,7 @@ import logging
 import os
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 def quiet_logs() -> None:
@@ -161,6 +161,18 @@ def cmd_create(args) -> None:
     --calendar selects by name; defaults to the first available."""
     dtstart = _parse_dt(args.start)
     dtend = _parse_dt(args.end) if args.end else (dtstart + timedelta(hours=1))
+    start_aware = dtstart.tzinfo is not None
+    end_aware = dtend.tzinfo is not None
+    if not args.all_day and start_aware != end_aware:
+        fail("--start and --end must both include a timezone offset or both omit it")
+    is_utc = start_aware and not args.all_day
+    if is_utc:
+        dtstart = dtstart.astimezone(timezone.utc).replace(tzinfo=None)
+        dtend = dtend.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        # All-day values name calendar dates, not UTC instants.
+        dtstart = dtstart.replace(tzinfo=None)
+        dtend = dtend.replace(tzinfo=None)
     db = SessionLocal()
     try:
         cal_q = db.query(CalendarCal)
@@ -181,7 +193,7 @@ def cmd_create(args) -> None:
             dtstart=dtstart,
             dtend=dtend,
             all_day=bool(args.all_day),
-            is_utc=False,
+            is_utc=is_utc,
             importance=args.importance,
             event_type=args.event_type or None,
         )
@@ -238,8 +250,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     pcr = sub.add_parser("create", help="create an event", parents=[common])
     pcr.add_argument("--title", required=True)
-    pcr.add_argument("--start", required=True, help="YYYY-MM-DD or ISO datetime")
-    pcr.add_argument("--end", help="YYYY-MM-DD or ISO datetime (default: start + 1h)")
+    pcr.add_argument("--start", required=True, help="YYYY-MM-DD or ISO datetime; timed offsets are preserved")
+    pcr.add_argument("--end", help="YYYY-MM-DD or ISO datetime (default: start + 1h); timed values must match --start's timezone awareness")
     pcr.add_argument("--calendar", help="calendar name (default: first available)")
     pcr.add_argument("--description", default="")
     pcr.add_argument("--location", default="")
