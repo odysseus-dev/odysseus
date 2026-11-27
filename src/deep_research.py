@@ -355,6 +355,7 @@ class DeepResearcher:
         extraction_timeout: int = 90,
         planning_timeout: int = 90,
         query_timeout: int = 120,
+        synthesis_timeout: int = 600,
         extraction_concurrency: int = 3,
         min_rounds: int = 2,
         max_empty_rounds: int = 2,
@@ -379,6 +380,7 @@ class DeepResearcher:
         self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
         self.planning_timeout = min(3600, max(15, int(planning_timeout or 90)))
         self.query_timeout = min(3600, max(15, int(query_timeout or 120)))
+        self.synthesis_timeout = min(86400, max(30, int(synthesis_timeout or 600)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
@@ -626,9 +628,13 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
                    max_tokens: int = 4096, timeout: int = 60,
-                   thinking_mode: Optional[str] = None) -> str:
+                   thinking_mode: Optional[str] = None,
+                   max_retries: Optional[int] = None) -> str:
         """Call the LLM asynchronously and strip thinking tags."""
         from src.llm_core import llm_call_async
+        call_kwargs = {}
+        if max_retries is not None:
+            call_kwargs["max_retries"] = max_retries
         response = await llm_call_async(
             url=self.llm_endpoint,
             model=self.llm_model,
@@ -638,6 +644,7 @@ class DeepResearcher:
             headers=self.llm_headers,
             timeout=timeout,
             thinking_mode=thinking_mode,
+            **call_kwargs,
         )
         return strip_thinking(response)
 
@@ -1722,11 +1729,12 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
-                # Synthesis is a heavy generation call like the final report
-                # (which gets 180s); a slow local model (e.g. a 20B served from
-                # LM Studio) routinely needs >60s for it. The old 60s cap timed
-                # out mid-stream and discarded the round's findings (#1551).
-                timeout=180,
+                # Synthesis is a heavy full-report generation call; use the
+                # configurable synthesis budget (default 600s) with max_retries=1
+                # so a slow local backend is not killed at 180s or retried 3x
+                # burning 3x the timeout budget (#6986).
+                timeout=getattr(self, "synthesis_timeout", 600),
+                max_retries=1,
             )
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
@@ -1788,7 +1796,8 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
-                timeout=180,
+                timeout=getattr(self, "synthesis_timeout", 600),
+                max_retries=1,
             )
 
             # If report is too short, ask the LLM to expand it
@@ -1811,7 +1820,8 @@ class DeepResearcher:
                     ],
                     temperature=0.4,
                     max_tokens=self.max_report_tokens,
-                    timeout=180,
+                    timeout=getattr(self, "synthesis_timeout", 600),
+                    max_retries=1,
                 )
                 if len(expanded.split()) > len(result.split()):
                     return expanded
