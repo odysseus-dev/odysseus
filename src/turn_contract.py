@@ -397,6 +397,18 @@ _CONVERSATIONAL_FOLLOWUP = re.compile(
     r"this|that|it|them|those|these)\b",
     re.I,
 )
+# A correction or clarification ("No, I'm talking about this mail ...",
+# "I meant the AWS one") restates the subject of the prior request instead of
+# naming a new operation. It only inherits families from the immediately
+# prior trusted user request (see the end of requested_capabilities), so it
+# can never widen authority beyond what the user already asked for.
+_CLARIFYING_FOLLOWUP = re.compile(
+    r"^\s*(?:(?:no|nope|nah|sorry|not\s+that(?:\s+one)?)\b[\s,.!—–:-]*)*"
+    r"(?:i\s*(?:['’]m|\s+am|\s+was)\s+(?:talking|asking)\s+about"
+    r"|i\s*(?:['’]m|\s+am|\s+was)\s+referring\s+to"
+    r"|i\s+(?:mean|meant))\b",
+    re.I,
+)
 _CONTEXTUAL_STATE_LOOKUP = re.compile(
     r"^\s*(?:what(?:['’]?s|\s+is)\s+(?:scheduled|coming\s+up)|"
     r"do\s+(?:i|we)\s+have\s+anything|did\s+(?:i|we)\s+(?:already\s+)?put\s+anything|"
@@ -6280,7 +6292,8 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
                 if role == "user" and content != message:
                     families.update(requested_capabilities(content, rows[:index]))
                     break
-    if not families and (_has_action_signal(text) or _LOOKUP.search(text) or _CONVERSATIONAL_FOLLOWUP.search(text)):
+    if not families and (_has_action_signal(text) or _LOOKUP.search(text) or _CONVERSATIONAL_FOLLOWUP.search(text)
+                         or _CLARIFYING_FOLLOWUP.search(text)):
         rows = list(history)
         for index in range(len(rows) - 1, -1, -1):
             row = rows[index]
@@ -6439,6 +6452,11 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     # The executable intersection below still enforces disabled tools/accounts.
     if 'search_emails' in selected:
         selected.update({'read_email', 'download_attachment', 'list_email_accounts'})
+    # The runtime downgrades a non-immediate send to an unsent draft for user
+    # review. A draft never leaves the account, so it is strictly weaker than
+    # the admitted send and must stay offered. Disabled tools still apply below.
+    if 'send_email' in selected:
+        selected.add('draft_email')
     selected.update(canonical_tool(n) for n in always_available_tools)
     # Offer only dynamic MCP operations already sealed by trusted request
     # admission. Tool discovery and model routing never create these grants.
