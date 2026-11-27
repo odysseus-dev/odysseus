@@ -1275,7 +1275,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_documents",
-            "description": "Manage stored editor-panel documents. Use this for ANY request to find/search/list/open/show/read/summarize/quote a document by title or content. For a titled document, call action='list' with search/title text to get the document_id, then action='read' with that document_id before answering. Do not answer document-read requests from memory or injected context when this tool is available. Also supports delete and tidy cleanup.",
+            "description": "Manage stored editor-panel documents. Use this for ANY request to find/search/list/open/show/read/summarize/quote a document by title or content. For a titled document, call action='list' with search/title text to get the document_id, then action='read' with that document_id before answering. Large documents are returned in ~10k-character pages with `next_offset`; when `truncated` is true, pass `offset=<next_offset>` to read the next page instead of repeating `offset=0` or raising `limit`. Do not answer document-read requests from memory or injected context when this tool is available. Also supports delete and tidy cleanup.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1283,8 +1283,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "document_id": {"type": "string", "description": "Document ID (for read/delete)"},
                     "search": {"type": "string", "description": "Search query (for list)"},
                     "language": {"type": "string", "description": "Filter by language (for list)"},
-                    "limit": {"type": "integer", "description": "Max results for list or max characters for read"},
-                    "offset": {"type": "integer", "description": "Character offset for read pagination"}
+                    "limit": {"type": "integer", "description": "Max results for list or max characters per read page (capped at ~10000 chars per call)"},
+                    "offset": {"type": "integer", "description": "Character offset for read pagination (pass next_offset from a truncated read)"}
                 },
                 "required": ["action"]
             }

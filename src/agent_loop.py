@@ -8059,7 +8059,7 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "manage_mcp": "- ```manage_mcp``` — Manage MCP (Model Context Protocol) tool servers — external tools that extend your capabilities. Args (JSON): {\"action\": \"list|add|delete|reconnect|list_tools\", ...}",
     "manage_webhooks": "- ```manage_webhooks``` — Configure outgoing webhooks (HTTP notifications on events like chat completion). Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}",
     "manage_tokens": "- ```manage_tokens``` — Generate or revoke API access tokens for external integrations. Args (JSON): {\"action\": \"list|create|delete\", ...}",
-    "manage_documents": "- ```manage_documents``` — List, read/open, delete, or tidy documents in the editor panel. Args (JSON): {\"action\": \"list|read|delete|tidy\", ...}. `list` returns rows like `[Title](#document-<id>) — lang, size, updated 5m ago` sorted MOST-RECENT FIRST; the user clicks the anchor to open. `read` (aliases: view/open/get) takes `document_id` and returns the content. When the user asks \"open/show/read my notes\" or \"what documents do I have\", use this — do NOT shell out, do NOT curl.",
+    "manage_documents": "- ```manage_documents``` — List, read/open, delete, or tidy documents in the editor panel. Args (JSON): {\"action\": \"list|read|delete|tidy\", ...}. `list` returns rows like `[Title](#document-<id>) — lang, size, updated 5m ago` sorted MOST-RECENT FIRST; the user clicks the anchor to open. `read` (aliases: view/open/get) takes `document_id` (and optional `offset`/`limit`) and returns up to ~10k chars per page; when truncated with `next_offset`, call `read` again with `offset=<next_offset>` instead of repeating `offset=0` or raising `limit`. When the user asks \"open/show/read my notes\" or \"what documents do I have\", use this — do NOT shell out, do NOT curl.",
     "manage_research": "- ```manage_research``` — List, read/open, or delete saved DEEP RESEARCH results from the Library. Args (JSON): {\"action\": \"list|read|delete\", \"id\": \"<id>\", \"search\": \"...\"}. `list` returns rows like `[query](#research-<id>) — N sources` MOST-RECENT FIRST; the user clicks to open. `read` (aliases: open/view/get) takes `id` and returns the report text + sources. Use when the user says \"open/read/find/delete my research\" or \"that report\". This IS how you read a finished report: when the user refers to a just-completed deep-research job (\"check it out\", \"read that report\", \"summarize the research\") WITHOUT giving an id, call `manage_research` with `action:list` to get the most-recent id, then `action:read` with that id, and answer from the returned text. Do NOT `web_fetch`/`app_api` the `/api/research/report/{id}` URL — that endpoint renders HTML for the browser, not clean text — and do NOT start a fresh `web_search`/`trigger_research` just to read an existing report. To START new research, use trigger_research instead.",
     "manage_settings": "- ```manage_settings``` — View/change the REAL app settings (same ones the Settings panel writes) AND turn tools on/off. Change a setting: `{\"action\":\"set\",\"key\":\"...\",\"value\":\"...\"}` — keys accept friendly aliases, e.g. voice→tts_voice, \"search engine\"→search_provider, \"default model\"→default_model, \"teacher model\"→teacher_model, \"task/background model\"→task_model, \"image quality\"→image_quality, \"reminder channel\"→reminder_channel (browser|email|ntfy), \"agent timeout\"/\"max tool calls\"/\"token budget\". Read: `{\"action\":\"get\",\"key\":\"...\"}`; see all: `{\"action\":\"list\"}`; reset one: `{\"action\":\"reset\",\"key\":\"...\"}`. Use this when the user asks to change ANY preference instead of making them open Settings. Secrets/API keys are read-only (tell them to set those in the panel). Tool toggles: `{\"action\":\"disable_tool\",\"tool\":\"shell\"}` (aliases: shell/search/browser/documents/memory/skills/images/tasks/notes/calendar/email), list disabled: `{\"action\":\"list_tools\"}`. You cannot re-enable a disabled tool: that is done by the user in Settings > Agent Tools.",
     "manage_notes": """\
@@ -19908,6 +19908,91 @@ def _redundant_read_should_block(
     )
 
 
+def _document_read_signature(tool_type: str, content: str) -> Optional[str]:
+    """Canonicalize manage_documents read calls so clamped limit retries match.
+
+    ManageDocumentTool caps every single read page inside ``MAX_OUTPUT_CHARS``,
+    so retrying ``offset=0`` with ``limit=20000`` or ``limit=50000`` (or with a
+    ``view``/``open``/``get`` alias) returns the exact same first page (#6808).
+    """
+    if str(tool_type or "").strip().lower() != "manage_documents":
+        return None
+    try:
+        args = json.loads(str(content or "").strip() or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(args, dict):
+        return None
+    action = str(args.get("action") or "").strip().lower()
+    if action not in {"read", "view", "open", "get"}:
+        return None
+    doc_id = str(args.get("document_id") or args.get("id") or args.get("uid") or "").strip()
+    if not doc_id:
+        return None
+    try:
+        offset = max(0, int(args.get("offset", 0) or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    from src.constants import MAX_OUTPUT_CHARS
+    raw_limit = args.get("limit")
+    if raw_limit is None:
+        effective_limit = MAX_OUTPUT_CHARS
+    else:
+        try:
+            effective_limit = min(max(1, int(raw_limit)), MAX_OUTPUT_CHARS)
+        except (TypeError, ValueError):
+            effective_limit = MAX_OUTPUT_CHARS
+    return f"manage_documents:read:{doc_id}:{offset}:{effective_limit}"
+
+
+def _document_mutation_tool_block(block: Any) -> bool:
+    """Return true when a tool block mutates stored editor-panel documents."""
+    tool_type = str(getattr(block, "tool_type", "") or "").strip().lower()
+    if tool_type in {"create_document", "edit_document", "update_document", "suggest_document"}:
+        return True
+    if tool_type == "manage_documents":
+        try:
+            args = json.loads(str(getattr(block, "content", "") or "").strip() or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if isinstance(args, dict):
+            return str(args.get("action") or "").strip().lower() in {"delete", "remove", "tidy"}
+    return False
+
+
+def _blocked_document_read_result(previous: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return an actionable loop-breaker error for a repeated document page read."""
+    from src.constants import MAX_OUTPUT_CHARS
+    prior_round = previous.get("round")
+    doc_id = str(previous.get("doc_id") or "")
+    offset = int(previous.get("offset") or 0)
+    next_offset = previous.get("next_offset")
+    size = previous.get("size")
+    if previous.get("truncated") and next_offset is not None:
+        next_call = json.dumps({"action": "read", "document_id": doc_id, "offset": next_offset})
+        span = f" ({next_offset}..{size} chars)" if size is not None else ""
+        msg = (
+            f"Blocked a repeated read of document '{doc_id}' at offset={offset} "
+            f"(already read in round {prior_round}; single-call output is capped at "
+            f"{MAX_OUTPUT_CHARS} chars, so raising limit without advancing offset "
+            f"returns the same page). Call manage_documents with {next_call} to read "
+            f"the next page{span}, or answer from the pages already read."
+        )
+    else:
+        msg = (
+            f"Blocked a repeated read of document '{doc_id}' at offset={offset}; "
+            f"the complete content from that offset was already returned in round "
+            f"{prior_round} and the document has not changed. Use the content already "
+            "read to answer the user."
+        )
+    return {
+        "error": msg,
+        "exit_code": 2,
+        "blocked": True,
+        "policy": "repeated_document_read",
+    }
+
+
 def _artifact_recovery_messages(
     messages: Sequence[Dict[str, Any]],
     tool_events: Sequence[Dict[str, Any]],
@@ -25148,6 +25233,8 @@ async def stream_agent_loop(
     _last_browser_open_signature = ""
     _failed_call_history: dict[str, dict[str, Any]] = {}
     _successful_read_call_history: dict[str, dict[str, Any]] = {}
+    _document_state_epoch = 0
+    _document_read_history: dict[str, dict[str, Any]] = {}
     _tui_local_network_completed = False
     _web_search_queries: list[str] = []
     # A web lookup is sufficient evidence for the current request. Once one
@@ -32602,6 +32689,14 @@ async def stream_agent_loop(
                 _workspace_mutation_epoch,
                 _browser_state_epoch,
             )
+            _doc_read_sig = _document_read_signature(block.tool_type, block.content)
+            _previous_document_read = (
+                _document_read_history.get(_doc_read_sig) if _doc_read_sig else None
+            )
+            _blocked_document_read = bool(
+                _previous_document_read
+                and _previous_document_read.get("doc_epoch") == _document_state_epoch
+            )
             # --- Tool budget check ---
             if max_tool_calls > 0 and total_tool_calls >= max_tool_calls:
                 if _runtime_action is not None:
@@ -32631,7 +32726,7 @@ async def stream_agent_loop(
             if local_inspection_budget_hit:
                 break
 
-            if not (_blocked_failed_retry or _blocked_redundant_read):
+            if not (_blocked_failed_retry or _blocked_redundant_read or _blocked_document_read):
                 total_tool_calls += 1
             normalized_native_block = _normalize_native_tool_shell_wrapper(block, _last_user)
             if normalized_native_block != block:
@@ -33471,6 +33566,20 @@ async def stream_agent_loop(
             _effective_call_signature = _tool_call_signature(
                 block.tool_type, block.content
             )
+            _effective_doc_read_sig = _document_read_signature(
+                block.tool_type, block.content
+            )
+            _effective_prior_doc_read = (
+                _document_read_history.get(_effective_doc_read_sig)
+                if _effective_doc_read_sig
+                else None
+            )
+            if (
+                _effective_prior_doc_read
+                and _effective_prior_doc_read.get("doc_epoch") == _document_state_epoch
+            ):
+                _previous_document_read = _effective_prior_doc_read
+                _blocked_document_read = True
             # Argument recovery can turn a vague/referential model call into
             # the exact mutation that already succeeded in an earlier round.
             # Check again after normalization so changing the model's raw
@@ -33686,6 +33795,17 @@ async def stream_agent_loop(
                 logger.info(
                     "[agent] allowing bounded pre-evidence call: %s",
                     block.tool_type,
+                )
+            elif _blocked_document_read:
+                _prior_round = _previous_document_read.get("round")
+                desc = f"{block.tool_type}: BLOCKED REPEATED DOCUMENT READ"
+                result = _blocked_document_read_result(_previous_document_read)
+                yield f'data: {json.dumps({"type": "tool_retry_blocked", "reason": "repeated_document_read", "tool": block.tool_type, "command": cmd_display, "round": round_num, "previous_round": _prior_round, **({"call_id": tool_call_id, "tool_call_id": tool_call_id} if tool_call_id else {})})}\n\n'
+                logger.info(
+                    "[agent] blocked repeated document read %s from round %s at document epoch %s",
+                    _effective_doc_read_sig,
+                    _prior_round,
+                    _document_state_epoch,
                 )
             elif _blocked_redundant_read:
                 _prior_round = _previous_successful_read.get("round")
@@ -33969,6 +34089,20 @@ async def stream_agent_loop(
                         "uncheck", "scroll", "back", "forward", "reload", "evaluate",
                     }:
                         _browser_state_epoch += 1
+                if _document_mutation_tool_block(block):
+                    _document_state_epoch += 1
+                if _effective_doc_read_sig:
+                    _doc_meta = result.get("document") if isinstance(result, dict) else None
+                    _doc_meta = _doc_meta if isinstance(_doc_meta, dict) else {}
+                    _document_read_history[_effective_doc_read_sig] = {
+                        "round": round_num,
+                        "doc_epoch": _document_state_epoch,
+                        "doc_id": _doc_meta.get("id") or _effective_doc_read_sig.split(":")[2],
+                        "offset": _doc_meta.get("offset", 0),
+                        "truncated": bool(_doc_meta.get("truncated")),
+                        "next_offset": _doc_meta.get("next_offset"),
+                        "size": _doc_meta.get("size"),
+                    }
                 if _workspace_inspection_tool_block(block):
                     _prior_read = _successful_read_call_history.get(_call_signature) or {}
                     _same_observation_state = (
@@ -33984,6 +34118,7 @@ async def stream_agent_loop(
             elif not (
                 _blocked_failed_retry
                 or _blocked_redundant_read
+                or _blocked_document_read
                 or _blocked_repeated_successful_mutation
                 or _blocked_user_bounded_execution_retry
             ):
