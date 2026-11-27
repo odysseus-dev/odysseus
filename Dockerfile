@@ -167,6 +167,9 @@ RUN mkdir -p data logs services/cache/search
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Container uvicorn listens on 7000; align APP_PORT so internal_api_base()
+# loopback calls reach the server instead of falling back to host default 7011.
+ENV APP_PORT=7000
 EXPOSE 7000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
