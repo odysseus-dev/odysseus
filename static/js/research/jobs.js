@@ -62,6 +62,13 @@ let _librarySyncInFlight = false;
 let _lastLibrarySyncAt = 0;
 const _LIBRARY_SYNC_MIN_MS = 120000;
 
+function _refreshVisibleResearch() {
+  if (document.hidden) return;
+  // A run completed elsewhere may now exist only in the persisted library.
+  _reconnectActive();
+  _syncLibrary({ force: true });
+}
+
 export function init(apiBase) {
   _apiBase = apiBase;
   // Restore failed launches as history so a refresh does not erase the only
@@ -83,6 +90,7 @@ export function init(apiBase) {
     if (document.hidden) return;
     _reconnectActive();
   }, 60000);
+  document.addEventListener('visibilitychange', _refreshVisibleResearch);
 }
 
 // Allow an immediate adopt when the chat stream signals a new research
