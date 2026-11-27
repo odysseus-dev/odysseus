@@ -110,13 +110,21 @@ class ModeConfig:
         if source.get('ODYSSEUS_HERMES_EXTENSION_DIR'):
             child_env['HERMES_WEBUI_EXTENSION_SCRIPT_URLS'] = '/extensions/return-to-odysseus.js'
             child_env['HERMES_WEBUI_EXTENSION_STYLESHEET_URLS'] = '/extensions/modes.css'
-        command = ('powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(repo / 'start.ps1'), '-BindHost', '127.0.0.1', '-Port', child_env['HERMES_WEBUI_PORT'])
+        command = webui_start_command(repo, child_env['HERMES_WEBUI_PORT'])
         return cls(url=url, command=command, environment=child_env, log_dir=Path(source['ODYSSEUS_DATA_DIR']) / 'logs')
 
     def __post_init__(self):
         parsed = urlsplit(self.url)
         if not parsed.port or self.url != f'http://127.0.0.1:{parsed.port}/':
             raise ValueError('Hermes mode requires an exact http://127.0.0.1:PORT/ URL')
+
+
+def webui_start_command(webui_dir, port):
+    """Official Hermes WebUI launcher for this OS: start.ps1 on Windows, start.sh elsewhere. Host/port also travel in the child environment."""
+    if os.name == 'nt':
+        return ('powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', os.path.join(str(webui_dir), 'start.ps1'),
+                '-BindHost', '127.0.0.1', '-Port', str(port))
+    return ('bash', os.path.join(str(webui_dir), 'start.sh'), '--host', '127.0.0.1', str(port))
 
 
 PROJECTS_HOST = 'hermes.localhost'

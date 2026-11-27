@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 from urllib.parse import urlsplit
 
-from src.application_modes import ModeConfig, ModeService
+from src.application_modes import ModeConfig, ModeService, webui_start_command
 from src.hermes_component import ComponentError, ComponentManager, component_lock, load_pins, plan_existing, probe_python, read_config, verify_checkout
 
 
@@ -130,8 +130,7 @@ def serve_component(root, application_root, environment):
         child.setdefault('HERMES_WEBUI_PYTHON', config['python'])
         child['HERMES_WEBUI_HOST'] = '127.0.0.1'
         child['HERMES_WEBUI_PORT'] = str(urlsplit(config['url']).port)
-        command = ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
-                   str(Path(config['webui']) / 'start.ps1'), '-BindHost', '127.0.0.1', '-Port', child['HERMES_WEBUI_PORT']]
+        command = list(webui_start_command(config['webui'], child['HERMES_WEBUI_PORT']))
         result = subprocess.run(command, env=child, stdin=subprocess.DEVNULL,
                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         return result.returncode

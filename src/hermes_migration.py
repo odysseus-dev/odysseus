@@ -420,6 +420,14 @@ def _live_gateway(home):
     if not isinstance(pid, int) or pid <= 4:
         return False
     try:
+        if os.name != 'nt':
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True
+            return True
         output = subprocess.run(['tasklist', '/FI', f'PID eq {pid}', '/NH'], capture_output=True, text=True, timeout=15, creationflags=_NO_WINDOW).stdout
         return str(pid) in output
     except (OSError, subprocess.TimeoutExpired):
