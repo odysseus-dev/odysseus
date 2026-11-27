@@ -1331,7 +1331,7 @@ function _renderEditorLanding() {
       // openEditor reports the initialization error and tears down its shell.
       console.error('[gallery] New canvas failed', error);
     }
-    if (!document.querySelector('#gallery-editor-container .gallery-editor')) {
+    if (!isEditorOpen()) {
       _renderEditorLanding();
     }
   });
