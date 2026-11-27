@@ -102,3 +102,23 @@ class TestBuildChatUrlNativeOllamaRoutesToApiChat:
 
     def test_ollama_com_api(self):
         assert build_chat_url("https://ollama.com/api") == "https://ollama.com/api/chat"
+
+
+class TestLocalApiV1OpenAICompat:
+    """#6622: OpenAI-compatible servers mounted under /api/v1 (e.g. Lemonade Server)
+    must not be misclassified as native Ollama."""
+
+    def test_api_v1_is_not_native_ollama(self):
+        assert not llm_core._is_ollama_native_url("http://localhost:13305/api/v1")
+        assert not llm_core._is_ollama_native_url("http://localhost:13305/api/v1/")
+        assert not llm_core._is_ollama_native_url("http://127.0.0.1:13305/api/v1")
+        assert not llm_core._is_ollama_native_url("http://localhost:13305/api/v1/chat/completions")
+        assert not llm_core._is_ollama_native_url("http://localhost:11434/api/v1")
+
+    def test_api_v1_provider_and_urls_use_openai_compat(self):
+        from src.endpoint_resolver import build_chat_url, build_models_url
+
+        base = "http://localhost:13305/api/v1"
+        assert llm_core._detect_provider(base) != "ollama"
+        assert build_models_url(base) == "http://localhost:13305/api/v1/models"
+        assert build_chat_url(base) == "http://localhost:13305/api/v1/chat/completions"
