@@ -131,6 +131,7 @@ export function handleUIControl(uiData) {
             if (bg.effectSize != null && tm2.applyBgEffectSize) { tm2.applyBgEffectSize(bg.effectSize); opts.bgEffectSize = bg.effectSize; }
             if (bg.effectSpeed != null && tm2.applyBgEffectSpeed) { tm2.applyBgEffectSpeed(bg.effectSpeed); opts.bgEffectSpeed = bg.effectSpeed; }
             if (bg.frosted != null && tm2.applyFrostedGlass) { tm2.applyFrostedGlass(bg.frosted); opts.frosted = bg.frosted; }
+            if (bg.panelOpacity != null && tm2.applyPanelOpacity) { tm2.applyPanelOpacity(bg.panelOpacity); opts.panelOpacity = bg.panelOpacity; }
           }
           if (tm2.saveCustomTheme) tm2.saveCustomTheme(name, colors2, Object.keys(opts).length ? opts : undefined);
         }
