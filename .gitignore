@@ -128,3 +128,5 @@ _scratch/
 
 # Real-application browser validation reports (scripts/run_real_playwright_validation.py)
 /artifacts/
+
+docker-compose.override.yml
