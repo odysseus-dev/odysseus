@@ -463,6 +463,7 @@ if AUTH_ENABLED:
                 if len(raw_token) < 12 or len(raw_token) > 100:
                     return JSONResponse(status_code=401, content={"error": "Invalid API token"})
                 prefix = raw_token[:8]
+                authenticated_api_token = False
                 try:
                     dirty_marker = Path(DATA_DIR) / "tokens.dirty"
                     if dirty_marker.exists():
@@ -522,9 +523,11 @@ if AUTH_ENABLED:
                         request.state.api_token_id = matched_id
                         request.state.api_token_owner = matched_owner
                         request.state.api_token_scopes = matched_scopes
-                        return await call_next(request)
+                        authenticated_api_token = True
                 except Exception:
                     logger.warning("API token auth error", exc_info=False)
+                if authenticated_api_token:
+                    return await call_next(request)
                 # Invalid bearer token — reject immediately
                 return JSONResponse(status_code=401, content={"error": "Invalid API token"})
 
