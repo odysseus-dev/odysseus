@@ -179,3 +179,13 @@ def test_memory_provider_registry_rejects_tool_name_conflicts():
         assert "memory_search" in str(exc)
     else:
         raise AssertionError("Expected duplicate memory tool names to be rejected")
+
+
+def test_native_provider_delete_preserves_foreign_row_even_if_imported_id_collides(tmp_path):
+    from src.memory import MemoryManager
+    from src.memory_provider import NativeMemoryProvider
+    manager = MemoryManager(str(tmp_path))
+    manager.save([{'id': 'imported-id', 'owner': 'alice', 'text': 'own record'},
+                  {'id': 'imported-id', 'owner': 'bob', 'text': 'foreign record'}])
+    assert run(NativeMemoryProvider(manager).delete('imported-id', owner='alice'))
+    assert [(e['owner'], e['text']) for e in manager.load_all_for_update()] == [('bob', 'foreign record')]
