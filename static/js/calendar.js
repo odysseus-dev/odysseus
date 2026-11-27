@@ -3188,21 +3188,28 @@ async function _showCalSettings() {
     const save = () => {
       clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
-        await fetch(`${API_BASE}/api/calendar/calendars/${id}?name=${encodeURIComponent(nameInput.value)}&color=${encodeURIComponent(colorInput.value)}`, { method: 'PUT' });
-        if (uiModule?.showToast) uiModule.showToast(`Saved “${nameInput.value || 'calendar'}”`);
-        // Update local calendar list
-        const c = _calendars.find(c => c.href === id);
-        if (c) { c.name = nameInput.value; c.color = colorInput.value; }
-        // Update colors on cached events
-        for (const uid of Object.keys(_allEvents)) {
-          if (_allEvents[uid].calendar_href === id) {
-            _allEvents[uid].color = colorInput.value;
-            _allEvents[uid].calendar = nameInput.value;
+        const name = nameInput.value;
+        const color = colorInput.value;
+        try {
+          const res = await fetch(`${API_BASE}/api/calendar/calendars/${id}?name=${encodeURIComponent(name)}&color=${encodeURIComponent(color)}`, { method: 'PUT' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (uiModule?.showToast) uiModule.showToast(`Saved “${name || 'calendar'}”`);
+          // Update local calendar list
+          const c = _calendars.find(c => c.href === id);
+          if (c) { c.name = name; c.color = color; }
+          // Update colors on cached events
+          for (const uid of Object.keys(_allEvents)) {
+            if (_allEvents[uid].calendar_href === id) {
+              _allEvents[uid].color = color;
+              _allEvents[uid].calendar = name;
+            }
           }
+          localStorage.removeItem(LS_KEY);
+          _fetchedRanges = [];
+          _render();
+        } catch (err) {
+          uiModule.showError(`Failed to save calendar: ${err.message || 'unknown error'}`);
         }
-        localStorage.removeItem(LS_KEY);
-        _fetchedRanges = [];
-        _render();
       }, 300);
     };
     const syncNameColor = () => {
@@ -3219,11 +3226,16 @@ async function _showCalSettings() {
     delBtn.addEventListener('click', async () => {
       const name = nameInput.value;
       if (!await window.styledConfirm(`Delete calendar "${name}" and all its events?`, { confirmText: 'Delete', danger: true })) return;
-      await fetch(`${API_BASE}/api/calendar/calendars/${id}`, { method: 'DELETE' });
-      row.remove();
-      _allEvents = {}; _fetchedRanges = []; localStorage.removeItem(LS_KEY);
-      _calendars = _calendars.filter(c => c.href !== id);
-      _render();
+      try {
+        const res = await fetch(`${API_BASE}/api/calendar/calendars/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        row.remove();
+        _allEvents = {}; _fetchedRanges = []; localStorage.removeItem(LS_KEY);
+        _calendars = _calendars.filter(c => c.href !== id);
+        _render();
+      } catch (err) {
+        uiModule.showError(`Failed to delete calendar: ${err.message || 'unknown error'}`);
+      }
     });
   });
 
