@@ -45,6 +45,7 @@ def finished(job_id):
     pytest.fail("background job did not finish")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_detached_execution_owns_boundary_and_reports_death(jobs):
     path, launched = jobs
     record = launch("printf captured", "chat", cwd=str(path))
@@ -105,6 +106,7 @@ async def test_bg_marker_refuses_without_spawning_and_authority_still_gates(jobs
     assert denied["failure_kind"] == "request_authority_denied"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_detached_supervisor_enforces_timeout(jobs):
     path, launched = jobs
     record = launch("sleep 60", "chat", cwd=str(path), max_runtime_s=1)
@@ -114,6 +116,7 @@ def test_detached_supervisor_enforces_timeout(jobs):
     assert result["teardown"]["dead"] is True
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_restart_keeps_verified_background_supervisor(jobs):
     path, launched = jobs
     record = launch("sleep 60", "chat", cwd=str(path))
@@ -135,6 +138,7 @@ def test_kill_never_marks_a_foreign_pid_killed(jobs, monkeypatch):
     assert result.dead is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_running_detached_output_and_concurrent_grants_are_preserved(jobs):
     path, launched = jobs
     for number in range(3):
@@ -146,6 +150,7 @@ def test_running_detached_output_and_concurrent_grants_are_preserved(jobs):
     assert all(grants[record["containment_id"]]["release"]["dead"] for record in launched)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_detached_output_is_available_while_running(jobs):
     path, launched = jobs
     record = launch("printf progress; sleep 5", "chat", cwd=str(path))
