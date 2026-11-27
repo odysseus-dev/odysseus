@@ -272,7 +272,7 @@ def build_embedding_lanes(base_name: str) -> List[EmbeddingLane]:
     return lanes
 
 
-def migrate_legacy_collection(base_name: str, lanes: Sequence[EmbeddingLane]) -> None:
+def migrate_legacy_collection(base_name: str, lanes: Sequence[EmbeddingLane], *, require_owner: bool = False) -> None:
     """Backfill empty lanes from a legacy unsuffixed collection, if present."""
     if not lanes:
         return
@@ -306,6 +306,16 @@ def migrate_legacy_collection(base_name: str, lanes: Sequence[EmbeddingLane]) ->
             for row_id, doc, meta in zip(ids, docs, all_metas)
             if row_id not in existing_ids
         ]
+        if require_owner:
+            from src.owner_identity import normalize_owner, is_request_sentinel_owner
+
+            missing = [
+                (row_id, doc, meta)
+                for row_id, doc, meta in missing
+                if isinstance(meta, dict)
+                and normalize_owner(meta.get("owner"))
+                and not is_request_sentinel_owner(normalize_owner(meta.get("owner")))
+            ]
         if not missing:
             continue
 

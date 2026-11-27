@@ -313,10 +313,37 @@ class PersonalDocsManager:
         else:
             logger.info(f"Directory already indexed: {directory}")
 
-    def remove_directory(self, directory: str):
-        """Remove a directory from the tracking list."""
+    def remove_directory(self, directory: str, owner: Optional[str] = None):
+        """Remove a directory from tracking (unscoped) or remove only *owner*'s chunks."""
         # Normalize the path
         directory = os.path.abspath(directory)
+
+        if owner is not None:
+            from src.owner_identity import effective_storage_owner
+
+            scoped_owner = effective_storage_owner(owner)
+            if scoped_owner is None:
+                return {"success": False, "message": "Valid owner required"}
+            if directory not in self.indexed_directories:
+                return {"success": True, "removed_count": 0, "message": "Directory not tracked"}
+            if not self.rag_manager:
+                return {"success": False, "message": "RAG manager unavailable"}
+            try:
+                try:
+                    result = self.rag_manager.remove_directory(directory, owner=scoped_owner)
+                except TypeError:
+                    result = self.rag_manager.remove_directory(directory)
+            except Exception as exc:
+                logger.error("Owner-scoped RAG deletion failed: %s", exc)
+                return {"success": False, "message": "RAG deletion failed"}
+            if isinstance(result, dict) and result.get("success") is False:
+                return {"success": False, "message": result.get("message") or "RAG deletion failed"}
+            removed_count = result.get("removed_count", 0) if isinstance(result, dict) else 0
+            return {
+                "success": True,
+                "removed_count": removed_count,
+                "message": "Owner-scoped RAG records removed",
+            }
         
         if directory in self.indexed_directories:
             self.indexed_directories.remove(directory)

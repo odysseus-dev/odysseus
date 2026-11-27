@@ -11,7 +11,7 @@ from fastapi.concurrency import run_in_threadpool
 from src.request_models import DirectoryRequest
 from core.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
 from src.rag_singleton import get_rag_manager
-from src.auth_helpers import require_privilege, require_user
+from src.auth_helpers import require_privilege, require_user, effective_storage_owner
 from core.middleware import require_admin
 from src.path_confinement import confine
 from src.upload_handler import secure_filename
@@ -274,18 +274,23 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
             rag = _rag()
 
+            storage_owner = effective_storage_owner(owner)
+            if storage_owner is None:
+                raise HTTPException(403, "Valid storage owner required")
+
             def _remove_directory():
-                # Always remove from personal_docs_manager tracking. This
-                # mutates the same unsynchronized list/index an add job touches
-                # and re-extracts text (refresh_index), so it is blocking work.
                 if hasattr(personal_docs_manager, 'remove_directory'):
-                    personal_docs_manager.remove_directory(directory)
-                # Remove from RAG vector store (best-effort).
+                    try:
+                        res = personal_docs_manager.remove_directory(directory, owner=storage_owner)
+                    except TypeError:
+                        res = personal_docs_manager.remove_directory(directory)
+                    if isinstance(res, dict) and res.get("success") is False:
+                        raise RuntimeError(res.get("message") or "Owner-scoped RAG removal failed")
                 if rag:
                     try:
+                        rag.remove_directory(directory, owner=storage_owner)
+                    except TypeError:
                         rag.remove_directory(directory)
-                    except Exception as e:
-                        logger.warning(f"RAG removal failed for directory {directory}: {e}")
 
             # Same job lock as add/reload so remove cannot interleave with an
             # in-flight add; offloaded off the event loop.
@@ -397,13 +402,20 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
     async def delete_file_from_rag(filepath: str = Query(...), owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
         """Delete a specific file from RAG index and optionally from disk."""
         try:
+            storage_owner = effective_storage_owner(owner)
+            if storage_owner is None:
+                raise HTTPException(403, "Valid storage owner required")
+
             def _delete_file():
-                # Remove chunks from RAG vector store (best-effort)
+                # Remove only the authorized owner's RAG records.
                 removed = 0
                 rag = _rag()
                 if rag:
                     try:
-                        removed = rag.delete_by_source(filepath)
+                        try:
+                            removed = rag.delete_by_source(filepath, owner=storage_owner)
+                        except TypeError:
+                            removed = rag.delete_by_source(filepath)
                     except Exception as e:
                         logger.warning(f"RAG removal failed for {filepath}: {e}")
 

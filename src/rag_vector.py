@@ -14,6 +14,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional, Set
 
 from src.constants import CHROMA_DIR
+from src.owner_identity import effective_storage_owner, is_request_sentinel_owner, normalize_owner
 from src.index_walk import prune_index_dirs, is_indexable_file
 from pathlib import Path
 
@@ -188,7 +189,14 @@ class VectorRAG:
         if not metadata or not isinstance(metadata, dict):
             return False
 
-        doc_id = _generate_doc_id(text, metadata.get("owner") or "")
+        raw_owner = metadata.get("owner")
+        if raw_owner is not None and is_request_sentinel_owner(raw_owner):
+            logger.warning("RAG indexing denied: sentinel owner rejected")
+            return False
+        norm_owner = normalize_owner(raw_owner)
+        if norm_owner:
+            metadata = {**metadata, "owner": norm_owner}
+        doc_id = _generate_doc_id(text, norm_owner or "")
         wrote = False
         for lane in self._lanes:
             try:
@@ -213,10 +221,15 @@ class VectorRAG:
         if not docs:
             return {"success": False, "message": "Empty document list"}
 
-        valid = [
-            (t, m) for t, m in docs
-            if t and isinstance(t, str) and m and isinstance(m, dict)
-        ]
+        valid = []
+        for t, m in docs:
+            if not (t and isinstance(t, str) and m and isinstance(m, dict)):
+                continue
+            raw_owner = m.get("owner")
+            if raw_owner is not None and is_request_sentinel_owner(raw_owner):
+                continue
+            norm_owner = normalize_owner(raw_owner)
+            valid.append((t, {**m, "owner": norm_owner} if norm_owner else m))
         if not valid:
             return {"success": False, "message": "No valid documents"}
 
@@ -346,6 +359,11 @@ class VectorRAG:
     # ------------------------------------------------------------------
 
     def search(self, query: str, k: int = 5, owner: Optional[str] = None) -> List[Dict[str, Any]]:
+        if owner is not None:
+            owner = effective_storage_owner(owner)
+            if owner is None:
+                logger.warning("RAG search denied: invalid owner")
+                return []
         if not self.healthy:
             return []
         if not query or not isinstance(query, str):
@@ -403,6 +421,11 @@ class VectorRAG:
             return self._keyword_search_fallback(query, k, owner=owner)
 
     def _keyword_search_fallback(self, query: str, k: int = 5, owner: Optional[str] = None) -> List[Dict[str, Any]]:
+        if owner is not None:
+            owner = effective_storage_owner(owner)
+            if owner is None:
+                logger.warning("RAG keyword fallback denied: invalid owner")
+                return []
         try:
             if not self._active_collections():
                 return []
@@ -555,7 +578,7 @@ class VectorRAG:
             logger.error(f"index_personal_documents {directory}: {e}")
             return {'success': False, 'indexed_count': indexed, 'failed_count': failed, 'message': str(e)}
 
-    def remove_directory(self, directory: str) -> Dict[str, Any]:
+    def remove_directory(self, directory: str, owner: Optional[str] = None) -> Dict[str, Any]:
         """Remove all chunks under ``directory`` (recursively), and nothing else.
 
         Selection is a Python-side path-boundary match on each chunk's stored
@@ -569,6 +592,11 @@ class VectorRAG:
         is abspath-normalized so it matches the absolute ``source`` that indexing
         always stores, regardless of how the caller passed it in.
         """
+        scoped_owner = None
+        if owner is not None:
+            scoped_owner = effective_storage_owner(owner)
+            if scoped_owner is None:
+                return {"success": False, "message": "Valid storage owner required"}
         if not self.healthy:
             return {"success": False, "message": "Collection not initialized"}
         directory = os.path.abspath(directory)
@@ -580,6 +608,7 @@ class VectorRAG:
                     results["ids"][i]
                     for i, m in enumerate(results["metadatas"])
                     if isinstance(m, dict)
+                    and (scoped_owner is None or m.get("owner") == scoped_owner)
                     and isinstance(m.get("source"), str)
                     and (m["source"] == directory or m["source"].startswith(directory + os.sep))
                 ]
@@ -675,9 +704,14 @@ class VectorRAG:
     # Delete by metadata
     # ------------------------------------------------------------------
 
-    def delete_by_source(self, source: str) -> int:
+    def delete_by_source(self, source: str, owner: Optional[str] = None) -> int:
         """Remove all chunks whose metadata['source'] matches *source*.
-        Returns the number of removed chunks."""
+        When *owner* is provided, deletes only chunks owned by that user."""
+        scoped_owner = None
+        if owner is not None:
+            scoped_owner = effective_storage_owner(owner)
+            if scoped_owner is None:
+                return 0
         if not self.healthy:
             return 0
         try:
@@ -685,9 +719,19 @@ class VectorRAG:
             for _lane_name, collection in self._collections_for_delete():
                 results = collection.get(
                     where={"source": source},
-                    include=[],
+                    include=["metadatas"] if scoped_owner is not None else [],
                 )
-                ids = results.get("ids", [])
+                if scoped_owner is not None:
+                    ids = [
+                        doc_id
+                        for doc_id, meta in zip(
+                            results.get("ids", []),
+                            results.get("metadatas", []),
+                        )
+                        if isinstance(meta, dict) and meta.get("owner") == scoped_owner
+                    ]
+                else:
+                    ids = results.get("ids", [])
                 if ids:
                     collection.delete(ids=ids)
                     removed_ids.update(ids)
