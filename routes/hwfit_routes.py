@@ -481,4 +481,72 @@ def setup_hwfit_routes():
             results = [m for m in results if _is_official_model(m)]
         return {"system": system, "models": results}
 
+
+    @router.get("/speculative")
+    def get_speculative_configs(
+        model: str = "",
+        backend: str = "",
+        quant: str = "",
+        draft_quant: str = "Q4_K_M",
+        ctx: int = 8192,
+        host: str = "",
+        ssh_port: str = "",
+        platform: str = "",
+        fresh: bool = False,
+    ):
+        """Find compatible draft-model configurations and CLI flags for speculative decoding."""
+        from services.hwfit.hardware import detect_system
+        from services.hwfit.models import get_models
+        from services.hwfit.speculative import find_compatible_draft_models
+
+        if not (model or "").strip():
+            raise HTTPException(400, "model is required")
+        host, ssh_port = _validate_detection_target(host, ssh_port)
+        system = detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
+        if system.get("error"):
+            return {"system": system, "compatible_drafts": [], "error": system["error"]}
+
+        catalog = get_models() or []
+        target = next((m for m in catalog if m.get("name") == model), None)
+        if target is None:
+            want = model.strip().lower()
+            target = next(
+                (m for m in catalog if want in str(m.get("name") or "").lower()),
+                {"name": model.strip(), "parameter_count": "8B"},
+            )
+        plan = find_compatible_draft_models(
+            target,
+            system,
+            catalog=catalog,
+            backend=backend or None,
+            target_quant=quant or None,
+            draft_quant=draft_quant or "Q4_K_M",
+            ctx=max(1024, min(int(ctx or 8192), 131072)),
+        )
+        return {"system": system, **plan}
+
+    @router.post("/speculative/evaluate")
+    def post_evaluate_speculative(body: dict):
+        """Evaluate end-to-end correctness and time-to-success for speculative decoding."""
+        from services.hwfit.speculative import evaluate_speculative_decoding
+
+        if not isinstance(body, dict):
+            raise HTTPException(400, "JSON body required")
+        spec_url = str(body.get("speculative_base_url") or body.get("base_url") or "").strip()
+        model_id = str(body.get("model") or "").strip()
+        if not spec_url or not model_id:
+            raise HTTPException(400, "speculative_base_url and model are required")
+        base_url = str(body.get("baseline_base_url") or "").strip() or None
+        base_model = str(body.get("baseline_model") or "").strip() or None
+        api_key = str(body.get("api_key") or "").strip() or None
+        prompts = body.get("prompts") if isinstance(body.get("prompts"), list) else None
+        return evaluate_speculative_decoding(
+            speculative_base_url=spec_url,
+            model_id=model_id,
+            baseline_base_url=base_url,
+            baseline_model_id=base_model,
+            api_key=api_key,
+            prompts=prompts,
+        )
+
     return router
