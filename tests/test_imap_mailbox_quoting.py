@@ -137,4 +137,4 @@ def test_mcp_bulk_move_verifies_ok_noop_and_uses_copy_delete(monkeypatch):
     assert es._bulk_move(["123"], "INBOX", "Trash", role="trash") == 1
     assert ("uid", "MOVE", b"123", '"Trash"') in conn.calls
     assert ("uid", "COPY", b"123", '"Trash"') in conn.calls
-    assert ("uid", "STORE", b"123", "+FLAGS", "\\Deleted") in conn.calls
+    assert ("uid", "STORE", b"123", "+FLAGS", "(\\Deleted)") in conn.calls
