@@ -3,19 +3,24 @@
   Odysseus - native Windows launcher (no Docker).
 
   One command to: create a virtualenv, install dependencies, run first-time
-  setup (prints an admin password on first run), and start the server.
+  setup (prints an admin password on first run), start a local ChromaDB server
+  for vector memory and document RAG, and start the server.
   Safe to re-run - it skips whatever already exists.
 
   Usage:
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -Port 7000 -BindHost 127.0.0.1
+    powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -NoChroma
 
   Tip: bind 127.0.0.1 (default) for local-only use. Use 0.0.0.0 only when you
   intentionally want other devices on your LAN to reach it.
 #>
 param(
     [int]$Port = 7000,
-    [string]$BindHost = "127.0.0.1"
+    [string]$BindHost = "127.0.0.1",
+    # Skip the local ChromaDB server (vector memory and RAG stay degraded
+    # unless CHROMADB_HOST points at a server you run yourself).
+    [switch]$NoChroma
 )
 
 $ErrorActionPreference = "Stop"
@@ -141,7 +146,107 @@ Write-Step "Running first-time setup"
 & $venvPy setup.py
 if ($LASTEXITCODE -ne 0) { Fail "setup.py failed." }
 
-# 5. Friendly note about Git Bash (full Cookbook / agent-shell parity)
+# 5. Local ChromaDB server for vector memory + document RAG.
+# Docker Compose runs ChromaDB next to the app; a native install has nothing
+# listening on CHROMADB_PORT, so memory and RAG come up degraded. The full
+# chromadb package (which provides `chroma run`) cannot share a venv with the
+# HTTP-only chromadb-client the app uses, so it gets its own venv, pinned to
+# the client's version.
+function Get-DotEnvValue($name) {
+    if (Test-Path ".env") {
+        foreach ($line in Get-Content ".env") {
+            if ($line -match ("^\s*" + $name + "\s*=\s*(.*)$")) { return $Matches[1].Trim().Trim('"').Trim("'") }
+        }
+    }
+    return $null
+}
+
+function Test-TcpPort($hostName, $portNumber) {
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $connect = $client.BeginConnect($hostName, $portNumber, $null, $null)
+        if (-not $connect.AsyncWaitHandle.WaitOne(500)) { return $false }
+        $client.EndConnect($connect)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
+}
+
+$chromaProc = $null
+$chromaHost = $env:CHROMADB_HOST
+if (-not $chromaHost) { $chromaHost = Get-DotEnvValue "CHROMADB_HOST" }
+if (-not $chromaHost) { $chromaHost = "localhost" }
+$chromaPort = $env:CHROMADB_PORT
+if (-not $chromaPort) { $chromaPort = Get-DotEnvValue "CHROMADB_PORT" }
+if (-not $chromaPort) { $chromaPort = "8100" }
+$chromaPort = [int]$chromaPort
+$chromaBindHost = "127.0.0.1"
+if ($chromaHost -in @("::1", "[::1]")) {
+    $chromaBindHost = "::1"
+    # chromadb-client constructs an HTTP URL from this host. An IPv6 literal
+    # needs brackets there, even though the server's bind address does not.
+    $env:CHROMADB_HOST = "[::1]"
+}
+
+if ($NoChroma) {
+    Write-Host ""
+    Write-Host "Skipping the local ChromaDB server (-NoChroma)." -ForegroundColor Yellow
+} elseif ($chromaHost -notin @("localhost", "127.0.0.1", "::1", "[::1]")) {
+    Write-Host ("CHROMADB_HOST is {0} - not starting a local ChromaDB server." -f $chromaHost)
+} elseif (Test-TcpPort $chromaBindHost $chromaPort) {
+    Write-Host ("ChromaDB already listening on port {0} - using it." -f $chromaPort)
+} else {
+    Write-Step "Starting the local ChromaDB server (vector memory + document RAG)"
+    $chromaVersion = (& $venvPy -c "import importlib.metadata as m; print(m.version('chromadb-client'))" 2>$null)
+    if ($chromaVersion) { $chromaVersion = $chromaVersion.Trim() }
+    $chromaVenvPy = Join-Path $PSScriptRoot "venv-chroma\Scripts\python.exe"
+    $chromaExe = Join-Path $PSScriptRoot "venv-chroma\Scripts\chroma.exe"
+    $chromaReady = $true
+    if (-not (Test-Path $chromaVenvPy)) {
+        & $venvPy -m venv venv-chroma
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $chromaVenvPy)) { $chromaReady = $false }
+    }
+    if ($chromaReady) {
+        $installed = (& $chromaVenvPy -c "import importlib.metadata as m; print(m.version('chromadb'))" 2>$null)
+        if ($installed) { $installed = $installed.Trim() }
+        if (-not (Test-Path $chromaExe) -or ($chromaVersion -and $installed -ne $chromaVersion)) {
+            $spec = "chromadb"
+            if ($chromaVersion) { $spec = "chromadb==" + $chromaVersion }
+            Write-Host ("Installing {0} into venv-chroma (first run only)..." -f $spec)
+            & $chromaVenvPy -m pip install --quiet --upgrade pip
+            & $chromaVenvPy -m pip install --quiet $spec
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $chromaExe)) { $chromaReady = $false }
+        }
+    }
+    if ($chromaReady) {
+        New-Item -ItemType Directory -Force -Path "logs" | Out-Null
+        $chromaProc = Start-Process -FilePath $chromaExe -PassThru -WindowStyle Hidden `
+            -ArgumentList @("run", "--host", $chromaBindHost, "--port", $chromaPort, "--path", "data\chroma") `
+            -RedirectStandardOutput "logs\chroma.log" -RedirectStandardError "logs\chroma.err.log"
+        $deadline = (Get-Date).AddSeconds(60)
+        while (-not (Test-TcpPort $chromaBindHost $chromaPort) -and -not $chromaProc.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+        }
+        if (Test-TcpPort $chromaBindHost $chromaPort) {
+            Write-Host ("ChromaDB running on {0}:{1} (data in data\chroma, log in logs\chroma.log)." -f $chromaBindHost, $chromaPort)
+        } else {
+            $chromaReady = $false
+            if (-not $chromaProc.HasExited) { Stop-Process -Id $chromaProc.Id -Force -ErrorAction SilentlyContinue }
+            $chromaProc = $null
+        }
+    }
+    if (-not $chromaReady) {
+        Write-Host ""
+        Write-Host "WARNING: could not start a local ChromaDB server (see logs\chroma.err.log)." -ForegroundColor Yellow
+        Write-Host "         Odysseus still starts, but vector memory and document RAG stay" -ForegroundColor Yellow
+        Write-Host "         degraded until a ChromaDB server is reachable on CHROMADB_PORT." -ForegroundColor Yellow
+    }
+}
+
+# 6. Friendly note about Git Bash (full Cookbook / agent-shell parity)
 if (-not (Find-GitBash)) {
     Write-Host ""
     Write-Host "NOTE: Git Bash (bash.exe) was not found on PATH." -ForegroundColor Yellow
@@ -150,7 +255,7 @@ if (-not (Find-GitBash)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Point CUDA_PATH at a real CUDA toolkit so GPU llama-cpp-python can import.
+# 7. Point CUDA_PATH at a real CUDA toolkit so GPU llama-cpp-python can import.
 $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
 if (Test-Path $cudaBase) {
     $cudaBest = Get-ChildItem $cudaBase -Directory -ErrorAction SilentlyContinue |
@@ -163,7 +268,7 @@ if (Test-Path $cudaBase) {
     }
 }
 
-# 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 8. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
 # -Port only reaches uvicorn as a flag. Everything that builds a URL for this
 # instance - internal_api_base(), companion pairing, the MCP OAuth callback -
 # reads APP_PORT, so set it too or they all assume 7000.
@@ -171,4 +276,10 @@ $env:APP_PORT = $Port
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
-& $venvPy -m uvicorn app:app --host $BindHost --port $Port
+try {
+    & $venvPy -m uvicorn app:app --host $BindHost --port $Port
+} finally {
+    if ($chromaProc -and -not $chromaProc.HasExited) {
+        Stop-Process -Id $chromaProc.Id -Force -ErrorAction SilentlyContinue
+    }
+}
