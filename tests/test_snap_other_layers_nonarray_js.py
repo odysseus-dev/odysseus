@@ -15,7 +15,7 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _snap(other_layers):
     js = f"""
-    import {{ computeSnap }} from '{_HELPER.as_posix()}';
+    import {{ computeSnap }} from '{_HELPER.as_uri()}';
     const layer = {{ id: 'L1', canvas: {{ width: 100, height: 50 }} }};
     const ctx = {{ zoom: 1, canvasW: 800, canvasH: 600, otherLayers: {json.dumps(other_layers)} }};
     console.log(JSON.stringify(computeSnap(layer, 10, 10, ctx)));
@@ -39,7 +39,7 @@ def test_compute_snap_tolerates_non_array_other_layers():
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_compute_snap_tolerates_missing_layer_or_context():
     js = f"""
-    import {{ computeSnap }} from '{_HELPER.as_posix()}';
+    import {{ computeSnap }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify([
       computeSnap(null, 10, 20, {{ zoom: 1, canvasW: 800, canvasH: 600 }}),
       computeSnap({{ id: 'L1' }}, 11, 21, {{ zoom: 1, canvasW: 800, canvasH: 600 }}),

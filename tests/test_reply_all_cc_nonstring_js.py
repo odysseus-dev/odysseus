@@ -15,7 +15,7 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _cc(data, mine):
     js = f"""
-    import {{ buildReplyAllCc }} from '{_HELPER.as_posix()}';
+    import {{ buildReplyAllCc }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify(buildReplyAllCc({json.dumps(data)}, {json.dumps(mine)})));
     """
     proc = subprocess.run(

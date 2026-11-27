@@ -17,7 +17,7 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _run(expr):
     js = (
-        f"import {{ portOf, nextFreePort }} from '{_HELPER.as_posix()}';"
+        f"import {{ portOf, nextFreePort }} from '{_HELPER.as_uri()}';"
         f"console.log(JSON.stringify({expr}));"
     )
     proc = subprocess.run(
