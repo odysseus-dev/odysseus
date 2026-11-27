@@ -210,6 +210,8 @@ _QWEN_FUNCTION_OPEN_RE = re.compile(r"<function=([A-Za-z_][\w:.-]*)>\s*")
 _QWEN_FUNCTION_CLOSE_RE = re.compile(r"</function>")
 _QWEN_PARAMETER_OPEN_RE = re.compile(r"<parameter=([A-Za-z_]\w*)>\s*")
 _QWEN_PARAMETER_CLOSE_RE = re.compile(r"</parameter>")
+_QWEN_PYTHON_CALL_NAME_RE = re.compile(r"\b[A-Za-z_][\w:.-]*")
+_QWEN_PYTHON_CALL_ARGS_RE = re.compile(r"\s*+\(([^()]*+)\)")
 _QWEN_PYTHON_ARG_KEY_RE = re.compile(r"[A-Za-z_]\w*")
 _QWEN_PYTHON_ARG_VALUE_RE = re.compile(r"\s*=\s*(['\"].*?['\"]|[^,]+)")
 _ANGLE_TAG_OPEN_RE = re.compile(r"<")
@@ -1063,6 +1065,26 @@ def iter_email_addresses(text: str, *, ascii_only: bool = False):
             pos = token.end()
 
 
+def _match_qwen_python_call(text: str) -> Optional[tuple[str, str]]:
+    """Find the first ``name(args)`` call without retrying name suffixes.
+
+    ``[\\w:.-]`` includes ``.``, ``-``, and ``:``, which create word boundaries
+    inside a single dotted/hyphenated token, while remaining disjoint from
+    whitespace and ``(``. Every suffix starting inside a maximal name token
+    shares the same ``token.end()``, so when ``\\s*\\(([^()]*)\\)`` fails there
+    no interior suffix can match either. Advancing to ``token.end()`` avoids
+    quadratic rescans on unclosed ``a.a.`` / ``a-a-`` / ``a:a:`` runs while
+    preserving nested calls starting after ``(``.
+    """
+    pos = 0
+    while name := _QWEN_PYTHON_CALL_NAME_RE.search(text, pos):
+        call_args = _QWEN_PYTHON_CALL_ARGS_RE.match(text, name.end())
+        if call_args is not None:
+            return name.group(0), call_args.group(1)
+        pos = name.end()
+    return None
+
+
 def _iter_qwen_python_args(raw_args: str):
     """Match each maximal key once, then its value at that fixed position.
 
@@ -1162,9 +1184,9 @@ def _parse_qwen3_native_text_call(
                 return block
 
     # Python-like single-call rendering: manage_notes(action="list").
-    match = re.search(r"\b([A-Za-z_][\w:.-]*)\s*\(([^()]*)\)", text)
-    if match:
-        name, raw_args = match.groups()
+    py_call = _match_qwen_python_call(text)
+    if py_call:
+        name, raw_args = py_call
         normalized_name = name.strip().lower()
         mapped_name = _TOOL_NAME_MAP.get(normalized_name, normalized_name)
         if (
