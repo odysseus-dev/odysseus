@@ -70,7 +70,7 @@ def test_attachment_reference_ids_match_reference(text):
     "[Attachment: a |" * 15_000,
     "<!-- pdf_source upload_id=" * 9_000,    # same sink, other pattern
     "<!--pdf_source " + f"upload_id='{_HEX}' " * 5_000 + "-->",
-])
+], ids=["attachment-20k", "attachment-pipe-15k", "pdf-source-9k", "upload-id-5k"])
 def test_internal_upload_id_extraction_is_linear(flood):
     from src.upload_handler import extract_internal_upload_ids
 
