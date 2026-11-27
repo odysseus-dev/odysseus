@@ -1,6 +1,6 @@
 """Local service controls: stop/restart the standalone Hermes WebUI and restart Odysseus itself.
 
-Windows only. Every action is reached from a same-origin browser administrator (see application_modes).
+Windows, plus a /proc-based Linux path for the process table, port owner and tree kill. Every action is reached from a same-origin browser administrator (see application_modes).
 Nothing here kills by name: the Hermes listener is found by its exact loopback port, must answer the Hermes
 health identity, and must be a Python process; Odysseus is restarted by killing its own launcher tree from a
 helper that is NOT part of that tree and then re-running the scheduled task that normally starts it. That
@@ -23,6 +23,9 @@ _TASK_NAME = re.compile(r'^[A-Za-z0-9 _.\-]{1,100}$')
 _LAUNCHER_MARK = 'launch-windows.ps1'
 _PYTHON_IMAGES = ('python.exe', 'pythonw.exe')
 RESTART_DELAY_SECONDS = 2
+# Read the process table and socket owners from /proc instead of PowerShell/netstat.exe. Tests that replay Windows tool
+# output set this False.
+_USE_PROC = os.name != 'nt'
 
 
 class Unavailable(RuntimeError):
@@ -48,6 +51,8 @@ def _run(command, timeout=20, **kwargs):
 
 def processes():
     """{pid: (ppid, image name, command line)} for every visible process."""
+    if _USE_PROC:
+        return _posix_processes()
     script = ('Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine '
               '| ConvertTo-Json -Compress')
     result = _run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script], timeout=30)
@@ -67,6 +72,8 @@ def listening_pids(port, netstat_output=None, *, fail_closed=False):
     keep the historical lenient semantics. Injected ``netstat_output`` is always trusted (no
     live probe runs, so there is no probe failure to detect).
     """
+    if netstat_output is None and _USE_PROC:
+        return _posix_listening_pids(port, fail_closed=fail_closed)
     if netstat_output is None:
         result = _run(['netstat.exe', '-ano', '-p', 'TCP'])
         if fail_closed and (result.returncode or not result.stdout.strip()):
@@ -94,15 +101,137 @@ def stop_hermes_listener(port, table=None, kill=None):
     pid = next(iter(pids))
     table = table if table is not None else processes()
     image = table.get(pid, (0, '', ''))[1]
-    if image not in _PYTHON_IMAGES:
+    if not _is_python_image(image):
         raise Unavailable(f'The Hermes port is owned by {image or "an unknown process"}, not Python; nothing was stopped.')
     (kill or kill_tree)(pid)
     return pid
 
 
 def kill_tree(pid):
+    if os.name != 'nt':
+        return _posix_kill_tree(int(pid))
     from src.process_lifecycle import taskkill_tree
     taskkill_tree(int(pid))
+
+
+# ---- POSIX (Linux) equivalents, read straight from /proc: no netstat.exe / PowerShell / taskkill, no extra dependency ----
+
+def _is_python_image(image):
+    """python.exe / pythonw.exe on Windows; python, python3, python3.14 ... (the kernel's comm name) elsewhere."""
+    return image in _PYTHON_IMAGES or re.fullmatch(r'python[0-9.]*', image or '') is not None
+
+
+def _posix_processes(proc='/proc'):
+    table = {}
+    try:
+        entries = os.listdir(proc)
+    except OSError as exc:
+        raise Unavailable('The process table (/proc) is unreadable.') from exc
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc, entry, 'stat'), encoding='utf-8', errors='replace') as handle:
+                stat = handle.read()
+            with open(os.path.join(proc, entry, 'cmdline'), 'rb') as handle:
+                command = handle.read().replace(b'\0', b' ').decode('utf-8', 'replace').strip()
+        except OSError:                                  # the process exited while being read
+            continue
+        # stat is "pid (comm) state ppid ...": comm may itself contain spaces or parentheses, so split at the LAST ")".
+        head, _, rest = stat.rpartition(')')
+        fields = rest.split()
+        if len(fields) < 2:
+            continue
+        table[int(entry)] = (int(fields[1]), head.partition('(')[2].lower(), command)
+    return table
+
+
+_LOOPBACK_HEX = {'0100007F', '00000000000000000000000001000000', '0000000000000000FFFF00000100007F'}
+
+
+def _posix_listening_pids(port, fail_closed=False, proc='/proc'):
+    """Same contract as the netstat path: PIDs listening on this TCP port, and whether every listener is loopback-only.
+    Sockets come from /proc/net/tcp{,6} (state 0A = LISTEN); their owners from /proc/<pid>/fd links (this user's processes)."""
+    inodes, loopback_only, read_any = {}, True, False
+    for table_name in ('tcp', 'tcp6'):
+        try:
+            with open(os.path.join(proc, 'net', table_name), encoding='ascii', errors='replace') as handle:
+                lines = handle.read().splitlines()[1:]
+            read_any = True
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 10 or parts[3] != '0A':
+                continue
+            host, _, hex_port = parts[1].partition(':')
+            if int(hex_port, 16) != int(port):
+                continue
+            inodes[parts[9]] = host.upper() in _LOOPBACK_HEX
+    if not read_any and fail_closed:
+        raise Unavailable('The socket table (/proc/net/tcp) is unreadable, so it is unknown whether the Hermes gateway runs '
+                          'inside the launcher tree; refusing the tree restart rather than guess.')
+    pids = set()
+    if inodes:
+        wanted = {f'socket:[{inode}]': loopback for inode, loopback in inodes.items()}
+        for entry in os.listdir(proc):
+            if not entry.isdigit():
+                continue
+            fd_dir = os.path.join(proc, entry, 'fd')
+            try:
+                fds = os.listdir(fd_dir)
+            except OSError:                              # another user's process, or it exited
+                continue
+            links = []
+            for fd in fds:
+                try:
+                    links.append(os.readlink(os.path.join(fd_dir, fd)))
+                except OSError:                          # this one descriptor closed meanwhile (e.g. the one listdir used)
+                    continue
+            for link in links:
+                if link in wanted:
+                    pids.add(int(entry))
+                    loopback_only = loopback_only and wanted[link]
+        if not pids and fail_closed:
+            raise Unavailable('Something listens on the Hermes port but its process cannot be identified; refusing rather than guess.')
+        # A listener whose owner this user cannot see still counts against loopback-only.
+        loopback_only = loopback_only and all(inodes.values())
+    return pids, loopback_only
+
+
+def _posix_kill_tree(pid, grace=10.0):
+    """taskkill /T for POSIX: SIGTERM the process and all its descendants, then SIGKILL whatever is left after ``grace`` seconds."""
+    import signal
+    import time
+    table = _posix_processes()
+    family, frontier = [pid], [pid]
+    while frontier:
+        children = [child for child, row in table.items() if row[0] in frontier and child not in family]
+        family += children
+        frontier = children
+
+    def send(sig, targets):
+        for target in targets:
+            try:
+                os.kill(target, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    send(signal.SIGTERM, family)
+    deadline = time.monotonic() + grace
+    alive = family
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.2)
+        alive = [target for target in alive if os.path.exists(f'/proc/{target}') and _posix_state(target) != 'Z']
+    send(signal.SIGKILL, alive)
+
+
+def _posix_state(pid):
+    try:
+        with open(f'/proc/{pid}/stat', encoding='utf-8', errors='replace') as handle:
+            return handle.read().rpartition(')')[2].split()[0]
+    except (OSError, IndexError):
+        return None
 
 
 def find_launcher(table, pid):

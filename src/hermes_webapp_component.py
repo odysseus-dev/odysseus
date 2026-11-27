@@ -561,7 +561,13 @@ class WebappComponent:
             moved, new_port = False, current_port
         home_path = private_directory(Path(home) if moved else Path(config['home']))
         existed = (home_path / 'config.yaml').is_file()
-        if not existed or moved or new_port != current_port:
+        drifted = False
+        if existed and not moved and new_port == current_port:
+            # A home restored or copied in from elsewhere (e.g. a Hermes Desktop home, whose Webapp ran on 9130) keeps ITS
+            # webapp.port/host: the gateway would then listen where Odysseus never looks. Heal that like any other drift.
+            webapp = (self.home_settings(config['python'], home_path).get('webapp') or {})
+            drifted = webapp.get('port') != current_port or webapp.get('host') != '127.0.0.1' or webapp.get('enabled') is not True
+        if not existed or moved or new_port != current_port or drifted:
             self.check_desktop_plugin(home_path)
             self._prepare_home(config['python'], home_path, new_port, config.get('public_url', ''), [], self.config_schema_version(Path(config['agent'])))
             self.last_actions.append('gateway home recreated' if not existed else 'gateway home settings updated')
@@ -1643,6 +1649,8 @@ def _port_free(port):
         with socket.socket() as sock:
             if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:   # POSIX: closed connections linger in TIME_WAIT ~60 s; only a real listener should make the port busy
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(('127.0.0.1', port))
         return True
     except OSError:

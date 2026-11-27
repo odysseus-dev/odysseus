@@ -169,6 +169,8 @@ def _port_is_free(port):
         with socket.socket() as sock:
             if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:   # POSIX: closed connections linger in TIME_WAIT ~60 s; only a real listener should make the port busy
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(('127.0.0.1', port))
         return True
     except OSError:

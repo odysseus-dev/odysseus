@@ -22,6 +22,17 @@ sys.path.insert(0, str(ROOT))
 
 from src import service_controls as controls  # noqa: E402
 
+
+def setUpModule():
+    # These tests replay Windows netstat.exe output, so they pin the Windows probe even when the suite runs on Linux.
+    global _windows_probe
+    _windows_probe = patch.object(controls, '_USE_PROC', False)
+    _windows_probe.start()
+
+
+def tearDownModule():
+    _windows_probe.stop()
+
 PORT = 9130
 PLAN = (100, 'Odysseus AutoStart')
 
