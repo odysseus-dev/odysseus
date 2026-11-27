@@ -22,6 +22,7 @@ MARKITDOWN_MISSING = (
 # and src/personal_docs); plain text/code/csv/json/markdown/html stay on the
 # cheaper built-in text path. These are the formats currently dropped entirely.
 MARKITDOWN_EXTS = frozenset({".docx", ".pptx", ".xlsx", ".xls", ".epub"})
+MAX_NATIVE_ARCHIVE_BYTES = 64 * 1024 * 1024
 
 
 def is_markitdown_format(path: str) -> bool:
@@ -56,6 +57,10 @@ def _extract_docx_native(path: str) -> str | None:
     ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     try:
         with zipfile.ZipFile(path) as z:
+            total_uncompressed = sum(info.file_size for info in z.infolist())
+            if total_uncompressed > MAX_NATIVE_ARCHIVE_BYTES:
+                logger.warning("Rejected oversized DOCX archive %s", path)
+                return None
             xml_bytes = z.read("word/document.xml")
     except (zipfile.BadZipFile, KeyError, OSError):
         return None

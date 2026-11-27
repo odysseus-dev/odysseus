@@ -127,6 +127,26 @@ def _is_legacy_google_flow(identifier: str) -> bool:
         db.close()
 
 
+def _make_legacy_oauth_state(server_id: str, request: Request) -> str:
+    """Create a signed, per-attempt state value for the legacy Google flow."""
+    from routes.email.email_helpers import make_oauth_state
+
+    owner = getattr(request.state, "current_user", None) or "anonymous"
+    return make_oauth_state(server_id, owner)
+
+
+def _verify_legacy_oauth_state(state: str, server_id: str, request: Request) -> bool:
+    """Validate the signed state and bind it to this server and admin session."""
+    from routes.email.email_helpers import verify_oauth_state
+
+    payload = verify_oauth_state(state)
+    if not payload or payload.get("a") != server_id:
+        return False
+    owner = payload.get("o")
+    current_user = getattr(request.state, "current_user", None)
+    return owner in {"anonymous", current_user}
+
+
 def setup_mcp_routes(mcp_manager: McpManager):
     """Setup MCP routes with the provided manager."""
 
@@ -480,6 +500,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             # paste the resulting URL back if they're on a different device.
             redirect_uri = _mcp_oauth_redirect_uri()
 
+            state = _make_legacy_oauth_state(server_id, request)
             params = {
                 "client_id": client_id,
                 "redirect_uri": redirect_uri,
@@ -487,7 +508,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 "scope": " ".join(scopes),
                 "access_type": "offline",
                 "prompt": "consent",
-                "state": server_id,
+                "state": state,
             }
             auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
 
@@ -521,10 +542,18 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 success=True,
             ))
 
-        # Check if this callback belongs to a legacy Google flow vs expired generic flow
-        if _is_legacy_google_flow(state):
+        # Check if this callback belongs to a signed legacy Google flow.
+        from routes.email.email_helpers import verify_oauth_state
+        legacy_state = verify_oauth_state(state)
+        if legacy_state and _is_legacy_google_flow(legacy_state.get("a")):
             require_admin(request)
-            return await _exchange_and_connect(state, code, request)
+            server_id = legacy_state["a"]
+            if not _verify_legacy_oauth_state(state, server_id, request):
+                return HTMLResponse(_oauth_result_page(
+                    "Authorization Expired",
+                    "This authorization round belongs to a different session. Press Reconnect in Odysseus and try again.",
+                ), status_code=400)
+            return await _exchange_and_connect(server_id, code, request)
 
         return HTMLResponse(_oauth_result_page(
             "Authorization Expired",
@@ -557,6 +586,16 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 "The MCP server is connecting. You can close this window and return to Odysseus.",
                 success=True,
             ))
+
+        if not _verify_legacy_oauth_state(state, server_id, request):
+            return HTMLResponse(_oauth_result_page(
+                "Authorization Expired",
+                "This authorization round is invalid or belongs to a different session. Press Reconnect in Odysseus and try again.",
+            ), status_code=400)
+        from routes.email.email_helpers import verify_oauth_state
+        legacy_state = verify_oauth_state(state)
+        if not legacy_state or legacy_state.get("a") != server_id:
+            return HTMLResponse(_oauth_result_page("Error", "The callback is for a different MCP server."), status_code=400)
 
         # Check if this exchange belongs to a legacy Google flow vs expired generic flow
         if _is_legacy_google_flow(server_id):
