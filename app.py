@@ -1289,10 +1289,14 @@ async def _startup_event():
         try:
             from src.builtin_mcp import register_builtin_servers
             await register_builtin_servers(mcp_manager)
+        except asyncio.CancelledError:
+            raise
         except BaseException as e:
             logger.warning(f"Built-in MCP registration failed (non-critical): {type(e).__name__}: {e}")
         try:
             await mcp_manager.connect_all_enabled()
+        except asyncio.CancelledError:
+            raise
         except asyncio.TimeoutError:
             logger.warning("User MCP startup timed out (non-critical)")
         except BaseException as e:

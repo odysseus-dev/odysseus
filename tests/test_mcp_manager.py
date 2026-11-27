@@ -110,3 +110,93 @@ def test_cancelled_http_connect_closes_transport(monkeypatch):
 
     asyncio.run(run())
     assert closes == [True]
+
+
+def test_successful_http_connect_closes_transport_in_its_own_task_on_disconnect(monkeypatch):
+    """#5743: successful HTTP MCP connections must close their transport in the
+    exact task that entered it rather than from disconnect_server()'s caller task."""
+    from types import SimpleNamespace
+
+    async def initialize(self):
+        return None
+
+    async def list_tools(self):
+        return SimpleNamespace(tools=[])
+
+    closes = _patch_http_transport(monkeypatch, initialize)
+    import mcp
+    monkeypatch.setattr(mcp.ClientSession, "list_tools", list_tools, raising=False)
+
+    mgr = McpManager()
+
+    async def run():
+        ok = await mgr.connect_server("s-http", "remote-http", "http", url="http://x/mcp/")
+        assert ok is True
+        assert "s-http" in mgr._owner_tasks
+        await mgr.disconnect_all()
+
+    asyncio.run(run())
+    assert closes == [True]
+    assert "s-http" not in mgr._stacks
+    assert "s-http" not in mgr._owner_tasks
+
+
+def test_successful_sse_and_stdio_connect_close_in_entering_task_on_disconnect(monkeypatch):
+    """#5743: SSE and user stdio transports entered via connect_server() must also
+    close their AsyncExitStack inside their dedicated owner task on disconnect."""
+    import contextlib
+    from types import SimpleNamespace
+    import mcp
+    import mcp.client.sse as sse_mod
+    import mcp.client.stdio as stdio_mod
+
+    closes = []
+
+    @contextlib.asynccontextmanager
+    async def fake_sse(url):
+        opener = asyncio.current_task()
+        try:
+            yield (object(), object())
+        finally:
+            closes.append(("sse", asyncio.current_task() is opener))
+
+    @contextlib.asynccontextmanager
+    async def fake_stdio(params):
+        opener = asyncio.current_task()
+        try:
+            yield (object(), object())
+        finally:
+            closes.append(("stdio", asyncio.current_task() is opener))
+
+    class FakeSession:
+        def __init__(self, *a):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def initialize(self):
+            return None
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[])
+
+    monkeypatch.setattr(sse_mod, "sse_client", fake_sse)
+    monkeypatch.setattr(stdio_mod, "stdio_client", fake_stdio)
+    monkeypatch.setattr(mcp, "ClientSession", FakeSession)
+    monkeypatch.setattr(mcp, "StdioServerParameters", lambda **kw: SimpleNamespace(**kw))
+
+    mgr = McpManager()
+
+    async def run():
+        ok_sse = await mgr.connect_server("s-sse", "remote-sse", "sse", url="http://x/sse")
+        ok_stdio = await mgr.connect_server("s-stdio", "user-stdio", "stdio", command="python", args=["srv.py"])
+        assert ok_sse is True
+        assert ok_stdio is True
+        await mgr.disconnect_all()
+
+    asyncio.run(run())
+    assert closes == [("sse", True), ("stdio", True)]
