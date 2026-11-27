@@ -57,11 +57,31 @@ _DATE_OR_TIME = (
     r"|\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b"
     r")"
 )
-_SHELL_COMMAND = (
-    r"(?:deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|find|cd|cp|mv|rm|"
-    r"pwd|lsblk|df|du|free|uname|uptime|whoami|id|env|printenv|ps|top|htop|lsof|"
-    r"ss|netstat|ip|ifconfig|ping|traceroute|dig|nslookup|curl|wget|nvidia-smi|"
-    r"nvcc|docker|systemctl|journalctl|tmux|git)"
+_UNAMBIGUOUS_SHELL_COMMAND = (
+    r"(?:grep|ls|cp|mv|rm|pwd|lsblk|df|uname|uptime|whoami|printenv|htop|lsof|"
+    r"netstat|ifconfig|traceroute|nslookup|curl|wget|nvidia-smi|nvcc|docker|"
+    r"systemctl|journalctl|tmux|git)"
+)
+_PROSE_AMBIGUOUS_SHELL_COMMAND = (
+    r"(?:deploy|build|install|restart|reboot|kill|tail|cat|find|cd|du|free|id|"
+    r"env|ps|top|ss|ip|ping|dig)"
+)
+_SHELL_COMMAND = rf"(?:{_UNAMBIGUOUS_SHELL_COMMAND}|{_PROSE_AMBIGUOUS_SHELL_COMMAND})"
+# Prose-ambiguous command words ("du" = German "you", "top", "free", "find",
+# "id", "cat", etc.) only count as bare shell commands when invoked alone or
+# followed by shell-shaped arguments (flags, paths/globs, filenames with
+# extensions, PIDs/IPs/domains, ENV=val, or known ps/ip subcommands).
+_SHELL_ARG = (
+    r"(?:"
+    r"-[A-Za-z0-9-]"
+    r"|[./~*]"
+    r"|\S+/"
+    r"|[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8}(?:[\s;|&><]|$)"
+    r"|\d+(?:\.\d+){0,3}(?::\d+)?(?:[\s;|&><]|$)"
+    r"|[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[\s;|&><]|$)"
+    r"|[A-Za-z_][A-Za-z0-9_]*="
+    r"|(?:aux|ef|addr|address|link|route|neigh|rule|netns|sport|dport|state)\b"
+    r")"
 )
 _BENCHMARK_COMMAND = r"(?:[a-z][a-z0-9_-]*bench(?:mark)?s?|bench(?:mark)?s?)"
 # "on <word>" and "from <word>" alone describe people, companies, and topics
@@ -208,7 +228,7 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         # word match promoted informational questions ("What does the grep
         # command do?") and incidental uses ("My cat ate my homework").
         ("shell", "run shell command request", rf"{_PLEASE}(?:run|execute|exec)\s+{_SHELL_COMMAND}\b(?:\s+\S.*)?$"),
-        ("shell", "bare shell command request", rf"{_PLEASE}{_SHELL_COMMAND}\b(?:\s+\S.*)?$"),
+        ("shell", "bare shell command request", rf"{_PLEASE}(?:{_UNAMBIGUOUS_SHELL_COMMAND}\b(?:\s+\S.*)?|{_PROSE_AMBIGUOUS_SHELL_COMMAND}\b\s+{_SHELL_ARG}.*|(?-i:{_PROSE_AMBIGUOUS_SHELL_COMMAND})\b\s*)$"),
         ("shell", "assistant shell command request", rf"{_ACTION_QUESTION}{_SHELL_COMMAND}\b(?:\s+\S.*)?$"),
         ("shell", "system/file check request", r"\b(check|see)\s+(if|whether|what)\s+.{1,40}\b(running|process|service|port|file|exists?)\b"),
     )
