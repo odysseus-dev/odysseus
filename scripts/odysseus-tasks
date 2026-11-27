@@ -54,9 +54,9 @@ def _serialize_run(r: "TaskRun") -> dict:
         "id": r.id,
         "task_id": r.task_id,
         "started_at": r.started_at.isoformat() if r.started_at else "",
-        "completed_at": r.completed_at.isoformat() if r.completed_at else "",
+        "completed_at": r.finished_at.isoformat() if r.finished_at else "",
         "status": r.status,
-        "output_preview": _preview_text(getattr(r, "output", "")),
+        "output_preview": _preview_text(r.result),
     }
 
 
