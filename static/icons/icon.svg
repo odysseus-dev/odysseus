@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="512" height="512" viewBox="0 0 512 512">
+  <title>Two-tone sail and wave</title>
+
+  <!-- Left sail: same geometry, with the lower-left vertical cut removed -->
+  <path d="M 256 64
+           L 102 352
+           L 256 352
+           Z"
+        fill="#E06C75"/>
+
+  <!-- Right sail: unchanged -->
+  <path d="M 256 128
+           L 386 352
+           L 256 352
+           Z"
+        fill="#E06C75"
+        fill-opacity="0.5"/>
+
+  <!-- WAVE: UNCHANGED -->
+  <path d="M 64 385
+           C 85.3 373.4 124.5 351.8 160 351
+           C 192 350.1 226.7 372.5 256 388
+           C 288 404.9 321.3 415 352 415
+           C 384 415 419.1 400.5 448 385"
+        fill="none"
+        stroke="#E06C75"
+        stroke-width="40"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+</svg>
