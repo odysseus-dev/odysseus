@@ -11,10 +11,17 @@ and showing the list is empty.
 """
 
 import asyncio
+import os
 
 import pytest
 
 from src import containment
+
+# Bind-destination reserved-path rules model bubblewrap mount points (/etc, /usr,
+# /workspace ...); POSIX paths are not normalised that way on native Windows.
+_POSIX_BIND_DESTS = pytest.mark.skipif(
+    os.name == "nt", reason="Linux bind-destination rules are not applied on Windows"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -368,8 +375,8 @@ def test_enforcement_is_the_shipped_default():
     ({"env": {"A": 1}}, "env keys and values must be str"),
     ({"env": {"A": "x\x00y"}}, "must not contain NUL"),
     ({"writable_extra": ("relative/path",)}, "must be absolute"),
-    ({"writable_extra": ("/",)}, "reserved path"),
-    ({"readonly_extra": ("/workspace",)}, "reserved path"),
+    pytest.param({"writable_extra": ("/",)}, "reserved path", marks=_POSIX_BIND_DESTS),
+    pytest.param({"readonly_extra": ("/workspace",)}, "reserved path", marks=_POSIX_BIND_DESTS),
 ])
 def test_a_malformed_spec_raises_in_both_modes(
     monkeypatch, workspace, mode, overrides, fragment,
@@ -528,6 +535,7 @@ async def test_an_external_bridge_grant_claims_nothing_and_cannot_be_run_locally
     "/workspace",
     "/workspace/sub",
 ])
+@_POSIX_BIND_DESTS
 def test_writable_extra_rejects_protected_system_roots_and_descendants(monkeypatch, workspace, protected_dest):
     install(monkeypatch, mechanism("fake", 10, containment.DIMENSIONS))
     spec = spec_for(workspace, writable_extra=(protected_dest,))
@@ -535,6 +543,7 @@ def test_writable_extra_rejects_protected_system_roots_and_descendants(monkeypat
         containment.acquire(spec, owner="session-1")
 
 
+@_POSIX_BIND_DESTS
 def test_writable_extra_accepts_legitimate_scratch_destinations(monkeypatch, workspace):
     install(monkeypatch, mechanism("fake", 10, containment.DIMENSIONS))
     spec = spec_for(workspace, writable_extra=("/var/scratch", "/tmp/custom_scratch", "/home/testuser/scratch"))
