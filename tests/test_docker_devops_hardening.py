@@ -299,3 +299,15 @@ def test_testing_docs_use_project_venv_for_python_validation():
         text = path.read_text(encoding="utf-8")
         for stale in stale_patterns:
             assert stale not in text, f"{path.name} still contains {stale!r}"
+
+
+def test_docker_entrypoint_and_compose_report_published_port():
+    entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "ODYSSEUS_SKIP_RUN_HINT=1" in entrypoint
+    assert "ODYSSEUS_PUBLISHED_PORT:-7011" in entrypoint
+    assert "http://localhost:7000" not in entrypoint
+
+    for path in COMPOSE_FILES:
+        compose = yaml.safe_load(path.read_text(encoding="utf-8"))
+        env = compose["services"]["odysseus"]["environment"]
+        assert "ODYSSEUS_PUBLISHED_PORT=${APP_PORT:-7011}" in env, path.name

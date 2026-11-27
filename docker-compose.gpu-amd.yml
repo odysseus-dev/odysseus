@@ -104,6 +104,7 @@ services:
       # remote MCP OAuth needs this set whenever the browser reaches
       # Odysseus on anything other than http://localhost:7000.
       - OAUTH_REDIRECT_BASE_URL=${OAUTH_REDIRECT_BASE_URL:-}
+      - ODYSSEUS_PUBLISHED_PORT=${APP_PORT:-7011}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
       - SERPER_API_KEY=${SERPER_API_KEY:-}
       - YDC_API_KEY=${YDC_API_KEY:-}
