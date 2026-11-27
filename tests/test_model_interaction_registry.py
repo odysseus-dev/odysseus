@@ -69,6 +69,56 @@ def test_ask_teacher_threads_owner_and_marks_teacher(monkeypatch):
     assert seen["owner"] == "bob"
 
 
+def _patch_teacher(monkeypatch, teacher_model):
+    import src.settings as settings
+    seen = {}
+
+    def fake_resolve(spec, owner=None):
+        seen["spec"] = spec
+        return ("http://x", spec, {})
+
+    async def fake_call(url, model, messages, headers=None, timeout=None):
+        return "advice"
+
+    monkeypatch.setattr(ai_interaction, "_resolve_model", fake_resolve)
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
+    monkeypatch.setattr(
+        settings, "get_setting",
+        lambda key, default=None: teacher_model if key == "teacher_model" else default,
+    )
+    return seen
+
+
+def test_ask_teacher_configured_model_overrides_requested_model(monkeypatch):
+    """#5525: the calling model must not pick a different (e.g. paid cloud)
+    endpoint when the admin pinned teacher_model."""
+    seen = _patch_teacher(monkeypatch, "local-teacher")
+
+    res = asyncio.run(mit.AskTeacherTool().execute("gpt-paid-cloud\nI am stuck", {}))
+
+    assert seen["spec"] == "local-teacher"
+    assert res["model"] == "local-teacher"
+
+
+def test_ask_teacher_auto_uses_configured_model(monkeypatch):
+    seen = _patch_teacher(monkeypatch, "local-teacher")
+    asyncio.run(mit.AskTeacherTool().execute("auto\nI am stuck", {}))
+    assert seen["spec"] == "local-teacher"
+
+
+def test_ask_teacher_unconfigured_keeps_requested_model(monkeypatch):
+    seen = _patch_teacher(monkeypatch, "")
+    asyncio.run(mit.AskTeacherTool().execute("some-model\nI am stuck", {}))
+    assert seen["spec"] == "some-model"
+
+
+def test_ask_teacher_unconfigured_auto_errors(monkeypatch):
+    seen = _patch_teacher(monkeypatch, "")
+    res = asyncio.run(mit.AskTeacherTool().execute("auto\nI am stuck", {}))
+    assert "No teacher model configured" in res["error"]
+    assert "spec" not in seen
+
+
 def test_list_models_no_endpoints(monkeypatch):
     class _Q:
         def filter(self, *a, **k):
