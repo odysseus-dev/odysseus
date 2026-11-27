@@ -1285,6 +1285,44 @@ def _email_index_delete(owner: str, account_id: str | None, folder: str | None, 
         logger.debug("email index delete skipped", exc_info=True)
 
 
+def _email_index_reconcile(owner: str, account_id: str | None, folder: str, authoritative_uids: set[str] | list[str]):
+    """Remove cached index rows in `folder` whose UIDs no longer exist on IMAP."""
+    if not folder:
+        return
+    keep = {str(u).strip() for u in (authoritative_uids or []) if str(u).strip()}
+    acct_key = _account_cache_key(account_id, owner)
+    owner_key = owner or ""
+    try:
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            if not keep:
+                conn.execute(
+                    "DELETE FROM email_message_index WHERE owner=? AND account_key=? AND folder=?",
+                    (owner_key, acct_key, folder),
+                )
+                conn.commit()
+                return
+            existing_rows = conn.execute(
+                "SELECT uid FROM email_message_index WHERE owner=? AND account_key=? AND folder=?",
+                (owner_key, acct_key, folder),
+            ).fetchall()
+            stale_uids = [str(r[0]) for r in existing_rows if r and r[0] and str(r[0]) not in keep]
+            if not stale_uids:
+                return
+            for i in range(0, len(stale_uids), 500):
+                batch = stale_uids[i:i + 500]
+                placeholders = ",".join("?" * len(batch))
+                conn.execute(
+                    f"DELETE FROM email_message_index WHERE owner=? AND account_key=? AND folder=? AND uid IN ({placeholders})",
+                    [owner_key, acct_key, folder, *batch],
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        logger.debug("email index reconcile skipped", exc_info=True)
+
+
 def _email_preview_cache_get(owner: str, account_id: str | None, folder: str, uid: str) -> dict | None:
     try:
         conn = _sql3.connect(SCHEDULED_DB)
@@ -2535,6 +2573,15 @@ def setup_email_routes():
                 status, data = _imap_uid_search(conn, f"({from_clause.strip()})")
             else:
                 status, data = _imap_uid_search(conn, "ALL")
+                if status == "OK" and not date_from and not date_to:
+                    raw_all = data[0].split() if (data and data[0]) else []
+                    auth_uids = {
+                        u.decode(errors="ignore") if isinstance(u, bytes) else str(u)
+                        for u in raw_all
+                    }
+                    with _LIST_CACHE_LOCK:
+                        if index_generation == _LIST_CACHE_GENERATION[0]:
+                            _email_index_reconcile(owner, account_id, folder, auth_uids)
 
             # Intersect the selected filter with an IMAP-native date range.
             # Search dates separately rather than sending the entire mailbox's
