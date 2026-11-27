@@ -2448,15 +2448,30 @@ function _wireTabEvents(body) {
       const fileQuant = file.match(/(?:^|[-_.\/])((?:I?Q\d(?:_[A-Z0-9]+){0,3})|(?:UD-[A-Z0-9_]+))(?=(?:[-_.]|\.gguf|$))/i);
       return fileQuant ? fileQuant[1].toUpperCase() : '';
     }
-    function _ggufIncludeForQuant(files, quant) {
-      const matches = files.filter(f => _ggufQuantFromPath(f) === quant);
-      if (!matches.length) return '';
-      const dirs = Array.from(new Set(matches.map(f => f.includes('/') ? f.split('/').slice(0, -1).join('/') : '')));
-      if (dirs.length === 1) {
-        const prefix = dirs[0] ? `${dirs[0]}/` : '';
-        return `${prefix}*${quant}*.gguf`;
+    function _isGgufQuantToken(tag) {
+      return /^(?:I?Q\d(?:_[A-Z0-9]+){0,3}|UD-[A-Z0-9_]+)$/i.test(String(tag || '').trim());
+    }
+    function _quantBoundaryGlob(tag) {
+      const clean = String(tag || '').trim();
+      if (!clean) return '';
+      if (/[*?\[\]]/.test(clean)) return clean;
+      if (_isGgufQuantToken(clean)) {
+        return `*[-._]${clean}[.-]*gguf`;
       }
-      return `*${quant}*.gguf`;
+      return `*[-._]${clean}[.-]*`;
+    }
+    function _ggufIncludeForQuant(files, quant) {
+      const target = String(quant || '').trim().toUpperCase();
+      if (!target) return '';
+      const matches = files.filter(f => _ggufQuantFromPath(f) === target);
+      if (!matches.length) return '';
+      if (matches.length === 1) return matches[0];
+      const dirs = Array.from(new Set(matches.map(f => f.includes('/') ? f.split('/').slice(0, -1).join('/') : '')));
+      if (dirs.length === 1 && dirs[0] && _ggufQuantFromPath(`${dirs[0]}/placeholder.gguf`) === target) {
+        return `${dirs[0]}/*.gguf`;
+      }
+      const prefix = (dirs.length === 1 && dirs[0]) ? `${dirs[0]}/` : '';
+      return `${prefix}*[-._]${target}[.-]*gguf`;
     }
     function _hideGgufPicker(message = '') {
       if (dlGgufRow) dlGgufRow.style.display = 'none';
@@ -2521,10 +2536,12 @@ function _wireTabEvents(body) {
     }
     // Split `org/repo:tag` (Ollama/llama.cpp style) into repo + include-glob.
     // The `:tag` picks a specific GGUF quantization file from the repo.
+    // Anchor the quant at filename delimiters so `:Q6_K` does not also match
+    // sibling variants like `Q6_K_L` or `:Q4_K` match `Q4_K_M` / `Q4_K_S`.
     function _splitRepoTag(raw) {
       const m = raw.match(/^([^\s/:]+\/[^\s/:]+):([^\s/]+)$/);
-      if (!m) return { repo: raw, include: null };
-      return { repo: m[1], include: `*${m[2]}*` };
+      if (!m) return { repo: raw, include: null, tag: null };
+      return { repo: m[1], include: _quantBoundaryGlob(m[2]), tag: m[2] };
     }
     // Split `org/repo/path/to/file.gguf` (or `.safetensors`/`.bin`) into
     // repo + exact file include. Lets the user paste a path straight out
@@ -2562,9 +2579,13 @@ function _wireTabEvents(body) {
       // both over the plain repo case. Ollama names still take priority
       // since they go through a different backend.
       const _fileSplit = !ollamaName ? _splitRepoFile(rawRepo) : null;
-      const { repo, include: autoInclude } = ollamaName
-        ? { repo: ollamaName, include: null }
-        : (_fileSplit || _splitRepoTag(rawRepo));
+      const _tagSplit = (!ollamaName && !_fileSplit) ? _splitRepoTag(rawRepo) : null;
+      const repo = ollamaName
+        ? ollamaName
+        : (_fileSplit ? _fileSplit.repo : _tagSplit.repo);
+      let autoInclude = ollamaName
+        ? null
+        : (_fileSplit ? _fileSplit.include : _tagSplit.include);
       let pickerInclude = (!ollamaName && !_fileSplit && !autoInclude && dlGgufQuant?.dataset.repo === repo)
         ? (dlGgufQuant.value || '')
         : '';
@@ -2576,6 +2597,22 @@ function _wireTabEvents(body) {
         uiModule.showToast('Enter a full HuggingFace repo ID like "org/model-name", or an Ollama name like "qwen2.5:14b".');
         dlInput.focus();
         return;
+      }
+      // Resolve `org/repo:QUANT` against the repo's GGUF file list so exact
+      // filenames (or quant-subfolder globs) are used when available, with the
+      // boundary-anchored glob from `_splitRepoTag` as fallback.
+      if (!ollamaName && !_fileSplit && _tagSplit?.tag && !/[*?\[\]]/.test(_tagSplit.tag) && _isGgufQuantToken(_tagSplit.tag)) {
+        try {
+          const res = await _fetchCookbookUiWithTimeout(`/api/cookbook/hf-gguf-files?repo_id=${encodeURIComponent(repo)}`, { credentials: 'same-origin' }, 15000);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.ok && Array.isArray(data.files)) {
+              const ggufFiles = data.files.map(s => String(s || '')).filter(name => /\.gguf$/i.test(name));
+              const resolvedInclude = _ggufIncludeForQuant(ggufFiles, _tagSplit.tag);
+              if (resolvedInclude) autoInclude = resolvedInclude;
+            }
+          }
+        } catch (_) {}
       }
       const looksGgufRepo = !ollamaName && !_fileSplit && !autoInclude && /\bgguf\b/i.test(repo);
       if (looksGgufRepo && !pickerInclude) {
